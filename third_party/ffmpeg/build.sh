@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+# 配置交叉编译工具链、启用所需编码器/解码器
+./configure \
+  --prefix="$(pwd)/output" \
+  --disable-static \
+  --enable-shared \
+  --enable-libmp3lame \
+  # ……
+make -j$(nproc)
+make install

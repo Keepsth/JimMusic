@@ -1,0 +1,8 @@
+[workspace]
+members = [
+  "app-core",
+  "plugin-manager",
+  "plugins/ffmpeg-decoder",
+  "plugins/symphonia-decoder",
+  "plugins/ui-bridge",
+]

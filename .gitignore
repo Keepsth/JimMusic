@@ -1,11 +1,16 @@
-/node_modules
-/oh_modules
-/local.properties
-/.idea
-**/build
-/.hvigor
-.cxx
-/.clangd
-/.clang-format
-/.clang-tidy
-**/.test
+# Rust
+/target/
+/**/*.rs.bk
+
+# Flutter
+/.dart_tool/
+/build/
+/.idea/
+/*.iml
+
+# ArkUI / HMS Dev
+/.hsp/
+/out/
+
+# FFmpeg 编译产物
+/third_party/ffmpeg/build/
