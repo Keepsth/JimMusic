@@ -308,6 +308,46 @@ class MusicPlayerProvider extends ChangeNotifier {
     await _savePlaylists();
   }
 
+  /// 同步远端命名歌单：创建或覆盖同名歌单的曲目集合（只保留曲库中
+  /// 存在的 ID；曲库未含有的远端曲目在拉取阶段已合并）。
+  Future<void> syncNamedPlaylist(String name, List<String> trackIds) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    final existing = _playlists[trimmed] ?? Playlist(name: trimmed);
+    existing.trackIds
+      ..clear()
+      ..addAll(trackIds.where((id) => _library.any((m) => m.id == id)));
+    _playlists[trimmed] = existing;
+    notifyListeners();
+    await _savePlaylists();
+  }
+
+  /// 应用来自后端会话快照（PLR-009）：恢复队列与位置，但绝不自动播放。
+  /// 返回是否实际应用（当前曲目能在曲库中解析）。
+  Future<bool> applySessionSnapshot({
+    required List<String> queueIds,
+    required String? currentTrackId,
+    required double position,
+  }) async {
+    if (currentTrackId == null && queueIds.isEmpty) return false;
+    final resolvedQueue = queueIds.map(_findTrack).whereType<Music>().toList();
+    if (resolvedQueue.isEmpty) return false;
+    _playlist = resolvedQueue;
+    final current = currentTrackId == null
+        ? null
+        : _findTrack(currentTrackId);
+    _currentMusic = current ?? resolvedQueue.first;
+    final restoredIndex = _playlist.indexWhere(
+      (track) => track.id == _currentMusic!.id,
+    );
+    _currentIndex = restoredIndex < 0 ? 0 : restoredIndex;
+    _currentPosition = position.clamp(0.0, double.infinity).toDouble();
+    _playerState = PlayerState.stopped; // 会话恢复永不自动播放
+    notifyListeners();
+    await _saveSession();
+    return true;
+  }
+
   /// 根据播放列表名解析曲目列表。
   List<Music> tracksInPlaylist(String name) {
     final pl = _playlists[name];

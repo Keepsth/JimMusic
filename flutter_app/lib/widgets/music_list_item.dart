@@ -76,6 +76,15 @@ class MusicListItem extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Tooltip(
+                message: '来源：${_sourceLabel(music.sourceType)}',
+                child: Icon(
+                  _sourceIcon(music.sourceType),
+                  size: 14,
+                  color: secondaryText,
+                ),
+              ),
+              const SizedBox(width: 6),
               Text(
                 music.duration,
                 style: TextStyle(color: secondaryText, fontSize: 11),
@@ -106,3 +115,19 @@ class MusicListItem extends StatelessWidget {
     );
   }
 }
+
+/// UI-002：本地、IPFS 与社区条目在列表中可区分。
+String _sourceLabel(TrackSourceType type) => switch (type) {
+  TrackSourceType.localFile => '本地文件',
+  TrackSourceType.localMemory => '内存导入',
+  TrackSourceType.cached => '本地缓存',
+  TrackSourceType.ipfs => 'IPFS',
+  TrackSourceType.community => '社区来源',
+};
+
+IconData _sourceIcon(TrackSourceType type) => switch (type) {
+  TrackSourceType.localFile || TrackSourceType.localMemory => Icons.folder,
+  TrackSourceType.cached => Icons.cached,
+  TrackSourceType.ipfs => Icons.lan,
+  TrackSourceType.community => Icons.groups,
+};

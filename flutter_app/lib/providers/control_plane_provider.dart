@@ -7,9 +7,11 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/control_api.dart';
 import '../services/control_api_sse.dart';
+import '../services/library_sync_service.dart';
 import '../services/persistence_service.dart';
 import '../services/rust_bridge.dart';
 import '../services/web_node_service.dart';
+import 'music_player_provider.dart';
 
 class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _endpoint = 'http://127.0.0.1:8787/v1';
@@ -74,6 +76,32 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get communitySources => _communitySources;
   List<Map<String, dynamic>> get moderationReports => _moderationReports;
   List<Map<String, dynamic>> get follows => _follows;
+  LibrarySyncReport? get librarySyncReport => _librarySyncReport;
+
+  LibrarySyncReport? _librarySyncReport;
+
+  /// 曲库统一同步（PLR-001/PLR-002/PLR-009/UI-002）：本地优先、双向同步
+  /// 后端 LibraryService，结果保存在 [librarySyncReport]。
+  Future<LibrarySyncReport?> syncLibrary(MusicPlayerProvider player) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    final api = _makeApi();
+    try {
+      final report = await LibrarySyncService().sync(api, player);
+      _librarySyncReport = report;
+      _loading = false;
+      notifyListeners();
+      return report;
+    } catch (error) {
+      _error = error.toString();
+      _loading = false;
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
   List<Map<String, dynamic>> get pins => _pins;
   Object? get lastResult => _lastResult;
   bool get connected => _health?['status'] == 'ok';

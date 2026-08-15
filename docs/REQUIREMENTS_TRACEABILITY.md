@@ -27,15 +27,15 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PROD-003 | 部分实现 | 原生 rust-ipfs Bitswap/Kademlia 与 Web Helia Bitswap 均不依赖 HTTP 网关；CID/签名校验和跨实现取回测试 | Android/iOS/HarmonyOS/Web 真机浏览器闭环待外证，移动 UI 的全部网络对象操作尚未统一到直连入口 |
 | PROD-004 | 部分实现 | `ErrorEnvelopeV1`、播放失败、bit-perfect `unsupported`、节点 limitations | 七端 UI 错误语义未做一致性验收 |
 | PROD-005 | 本机通过 | 本矩阵、`docs/RELEASE_ACCEPTANCE.md`、发布元数据 | 发布后需绑定实际 run、commit 与产物 URL |
-| PLR-001 | 部分实现 | `LibraryService` 支持本地与 Manifest；Flutter 系统选择器 | Flutter 曲库尚未与后端 Manifest 曲库统一 |
-| PLR-002 | 部分实现 | `library.json` 原子持久化，缺失文件保留并标记；单测 | Flutter 仍维护自己的本地曲库状态 |
+| PLR-001 | 本机通过 | `LibraryService` 支持本地与 Manifest；Flutter 系统选择器；曲库统一同步：本地文件曲目推送（路径派生稳定 ID，幂等）、Manifest/社区曲目拉取合并进同一媒体库模型、来源可区分；跨语言稳定 ID 黄金向量 + 同步流程测试 | 七端同步交互与多设备冲突策略待验收 |
+| PLR-002 | 本机通过 | `library.json` 原子持久化，缺失文件保留并标记；单测；Flutter 曲库经同步与控制面统一（本地优先、双向合并），缺失/离线/解码缺失映射为结构化可用性状态并展示 | 七端重启一致性待验收 |
 | PLR-003 | 本机通过 | `Player`/`PlaybackEngine`、Rust FFI、just_audio 回退；状态/队列/FFI 测试 | 七端真实声卡/浏览器验收待执行 |
 | PLR-004 | 部分实现 | Flutter 音量、静音、偏好持久化 | bit-perfect 下真实驱动会话旁路未实现 |
 | PLR-005 | 本机通过 | Core 队列自动续播、`LibraryService` 命名歌单、Flutter 歌单；重启测试 | 七端 UI E2E 待执行 |
 | PLR-006 | 待外证 | Symphonia 增量解码声明 MP3/AAC/FLAC/WAV/OGG/Opus | 格式语料和七端声明矩阵未运行，DSD 不支持 |
 | PLR-007 | 部分实现 | `LibraryTrackV1`/`TrackSourceV1` 统一描述来源 | 网络 Source 尚未接入同一播放入口 |
 | PLR-008 | 部分实现 | `PlaybackFailure` 含来源、阶段、码、重试、建议；失败测试 | 网络中断和设备热拔插矩阵不完整 |
-| PLR-009 | 本机通过 | `PlaybackSessionV1` 保存曲目、队列、位置、路径且强制 `auto_play=false`；重启测试 | Flutter 与后端会话尚未统一 |
+| PLR-009 | 本机通过 | `PlaybackSessionV1` 保存曲目、队列、位置、路径且强制 `auto_play=false`；重启测试；会话统一：本地有活动会话时推送（ID 换算），否则从控制面恢复位置与队列，恢复路径强制不自动播放；测试 | 多设备同时编辑会话的冲突策略待验收 |
 | PLR-010 | 本机通过 | `choose_source` 按 codec/质量选择，失败返回所需 codec；单测 | Flutter 尚未展示插件安装直达入口 |
 
 ## Audio Graph 与插件平台
@@ -128,7 +128,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | ID | 状态 | 实现/证据入口 | 未闭环项 |
 |---|---|---|---|
 | UI-001 | 本机通过 | 播放页来自 Rust Bridge/just_audio 真实事件，错误可见，无模拟 timer；来源标签（Rust Core 输出/本地文件/内存字节/IPFS 边下边播/CID/社区）、just_audio 缓冲位置进度与边下边播传输下载状态（字节/状态/Provider）全部来自真实服务状态；小屏改为可滚动布局；4 项测试 | 七端截图/无障碍证据待 RC |
-| UI-002 | 部分实现 | 本地导入、扫描、搜索、排序、缺失标记 | 后端 IPFS/社区曲库未接入同一 Flutter 列表 |
+| UI-002 | 本机通过 | 本地导入、扫描、搜索、排序、缺失标记；同步后后端 IPFS/社区曲目进入同一列表，来源图标（本地/IPFS/社区/缓存）可区分；控制台新增曲库同步页（报告与错误可见）；映射与同步测试 6 项 | 七端截图/无障碍证据待 RC |
 | UI-003 | 本机通过 | 传输页显示状态、优先级、速度、Provider、校验/提交、目标和错误；可调优先级/暂停/恢复/取消/重试 | 七端截图与辅助功能证据待 RC |
 | UI-004 | 部分实现 | 身份、签名、publish/update/tombstone、Pin receipt 入口 | 缺完整元数据/rendition 表单和副本向导 |
 | UI-005 | 本机通过 | 社区页独立开关、维护者/密钥/Manifest/序列/错误与刷新 | 策略冲突的内容级解释入口不完整 |

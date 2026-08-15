@@ -56,6 +56,9 @@ dependencies:
   # Web 端控制面 SSE：fetch 流式读取（携带鉴权头，EventSource 无法设置请求头）
   web: ^1.1.0
 
+  # 与后端 LibraryService 稳定 ID 一致（jm_ + sha256 前缀）
+  crypto: ^3.0.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

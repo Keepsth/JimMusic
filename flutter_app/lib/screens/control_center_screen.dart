@@ -14,7 +14,7 @@ class ControlCenterScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 6,
+      length: 7,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('JimMusic 控制台'),
@@ -35,6 +35,7 @@ class ControlCenterScreen extends StatelessWidget {
             tabs: [
               Tab(text: '节点'),
               Tab(text: '传输'),
+              Tab(text: '曲库'),
               Tab(text: '发布'),
               Tab(text: '社区'),
               Tab(text: '插件'),
@@ -62,6 +63,7 @@ class ControlCenterScreen extends StatelessWidget {
                   children: [
                     _NodeTab(control),
                     _TransfersTab(control),
+                    _LibraryTab(control),
                     _PublishTab(control),
                     _CommunityTab(control),
                     _PluginsTab(control),
@@ -557,6 +559,96 @@ class _NodeTab extends StatelessWidget {
                 .where((value) => value.isNotEmpty)
                 .toList(),
     });
+  }
+}
+
+/// 曲库统一同步页（PLR-001/PLR-002/PLR-009/UI-002）。
+class _LibraryTab extends StatelessWidget {
+  final ControlPlaneProvider control;
+  const _LibraryTab(this.control);
+
+  @override
+  Widget build(BuildContext context) {
+    final player = context.watch<MusicPlayerProvider>();
+    final report = control.librarySyncReport;
+    final localFiles = player.library
+        .where(
+          (music) =>
+              music.filePath != null && music.filePath!.isNotEmpty,
+        )
+        .length;
+    final network = player.library.length - localFiles;
+    return Scaffold(
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: control.loading
+            ? null
+            : () async {
+                final messenger = ScaffoldMessenger.of(context);
+                final result = await control.syncLibrary(player);
+                messenger.showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      result == null
+                          ? '同步失败：${control.error ?? '未知错误'}'
+                          : '同步完成：$result',
+                    ),
+                  ),
+                );
+              },
+        icon: const Icon(Icons.sync),
+        label: const Text('同步曲库'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: ListTile(
+              title: const Text('本地曲库（Flutter）'),
+              subtitle: Text(
+                '共 ${player.library.length} 首'
+                '（本地文件 $localFiles · 网络内容 $network）'
+                '\n歌单 ${player.playlists.length} · 收藏 ${player.favoriteIds.length}',
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('同步行为'),
+            subtitle: Text(
+              '本地优先：推送本地文件曲目到控制面；拉取 Manifest/社区曲目'
+              '合并进本列表；收藏与命名歌单双向合并；本地无活动会话时'
+              '从控制面恢复播放位置（绝不自动播放）。',
+            ),
+          ),
+          if (report != null) ...[
+            const SizedBox(height: 8),
+            Card(
+              child: ListTile(
+                leading: Icon(
+                  report.errors.isEmpty
+                      ? Icons.check_circle
+                      : Icons.warning_amber,
+                ),
+                title: const Text('最近同步'),
+                subtitle: Text('$report'),
+              ),
+            ),
+            for (final error in report.errors.take(5))
+              ListTile(
+                dense: true,
+                title: Text(
+                  error,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.error,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
   }
 }
 
