@@ -409,6 +409,13 @@ class _NodeTab extends StatelessWidget {
     );
     var metered = config['metered_network_allowed'] == true;
     var networkClass = (config['network_class'] as String?) ?? 'unknown';
+    var assistPin = config['assist_pin_favorites'] == true;
+    final pinServices = TextEditingController(
+      text:
+          (config['pin_services'] as List<dynamic>? ?? const [])
+              .whereType<String>()
+              .join(', '),
+    );
     String? validationError;
     final accepted = await showDialog<bool>(
       context: context,
@@ -458,6 +465,19 @@ class _NodeTab extends StatelessWidget {
                     title: const Text('允许计量网络'),
                     value: metered,
                     onChanged: (value) => setState(() => metered = value),
+                  ),
+                  SwitchListTile(
+                    title: const Text('收藏时协助 Pin'),
+                    subtitle: const Text('收藏曲目时帮助固定其内容 CID（DST-009）'),
+                    value: assistPin,
+                    onChanged: (value) => setState(() => assistPin = value),
+                  ),
+                  TextField(
+                    controller: pinServices,
+                    decoration: const InputDecoration(
+                      labelText: '第三方 Pin 服务（Kubo 兼容，逗号分隔）',
+                      hintText: 'https://pin.example.com',
+                    ),
                   ),
                   DropdownButtonFormField<String>(
                     initialValue: networkClass,
@@ -528,6 +548,14 @@ class _NodeTab extends StatelessWidget {
           : int.parse(download.text),
       'metered_network_allowed': metered,
       'network_class': networkClass,
+      'assist_pin_favorites': assistPin,
+      'pin_services': pinServices.text.trim().isEmpty
+          ? const <String>[]
+          : pinServices.text
+                .split(',')
+                .map((value) => value.trim())
+                .where((value) => value.isNotEmpty)
+                .toList(),
     });
   }
 }

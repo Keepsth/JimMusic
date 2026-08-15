@@ -32,6 +32,12 @@ pub struct NodeConfig {
     /// `None` 表示尚未声明（视为非计量网络，NOD-006）。
     #[serde(default)]
     pub network_class: Option<String>,
+    /// 收藏曲目时自动协助 Pin 其内容 CID（用户显式开启，DST-009）。
+    #[serde(default)]
+    pub assist_pin_favorites: bool,
+    /// 显式配置的第三方 Kubo 兼容 Pin 服务端点（DST-009）。
+    #[serde(default)]
+    pub pin_services: Vec<String>,
 }
 
 impl Default for NodeConfig {
@@ -44,6 +50,8 @@ impl Default for NodeConfig {
             download_limit_bytes_per_second: None,
             metered_network_allowed: false,
             network_class: None,
+            assist_pin_favorites: false,
+            pin_services: Vec::new(),
         }
     }
 }
@@ -397,7 +405,7 @@ impl NodeService {
             last_success_at: local.map(|record| record.last_accessed_at),
             latency_ms: local.map(|_| 0),
             local_pin: local.is_some_and(|record| record.pinned),
-            configured_pin_services: Vec::new(),
+            configured_pin_services: state.config.pin_services.clone(),
             health: if local.is_some() || providers > 0 {
                 ProviderHealthState::Healthy
             } else {
@@ -526,6 +534,32 @@ fn validate_config(config: &NodeConfig) -> Result<(), NodeError> {
         if !NETWORK_CLASSES.contains(&class.as_str()) {
             return Err(NodeError::InvalidConfig(format!(
                 "network_class must be one of {NETWORK_CLASSES:?} or null"
+            )));
+        }
+    }
+    if config.pin_services.len() > 16 {
+        return Err(NodeError::InvalidConfig(
+            "at most 16 third-party pin services may be configured".into(),
+        ));
+    }
+    for service in &config.pin_services {
+        if service.len() > 2000 {
+            return Err(NodeError::InvalidConfig(
+                "pin service endpoint exceeds 2000 characters".into(),
+            ));
+        }
+        let Ok(uri) = url::Url::parse(service) else {
+            return Err(NodeError::InvalidConfig(format!(
+                "pin service `{service}` is not a valid URL"
+            )));
+        };
+        if !matches!(uri.scheme(), "http" | "https")
+            || uri.host_str().is_none()
+            || !uri.username().is_empty()
+            || uri.password().is_some()
+        {
+            return Err(NodeError::InvalidConfig(format!(
+                "pin service `{service}` must be an http(s) URL without credentials"
             )));
         }
     }

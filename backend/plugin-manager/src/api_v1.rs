@@ -601,7 +601,7 @@ async fn pin(
     }
     let request_id = request_id(&headers, None)?;
     let fingerprint = crate::state::sha256_hex(cid.as_bytes());
-    let (response, _) = state
+    let (response, replayed) = state
         .idempotency
         .execute("node.pin", &request_id, &fingerprint, || {
             state.node.pin(&cid).map_err(|error| error.to_string())?;
@@ -612,6 +612,10 @@ async fn pin(
             }))
         })
         .map_err(|error| map_idempotency("node", "pin", error))?;
+    if !replayed {
+        // 第三方 Pin 服务（DST-009）：本地 Pin 成功后异步推送。
+        spawn_remote_pins(&state, cid);
+    }
     Ok(Json(response))
 }
 
@@ -693,6 +697,23 @@ async fn apply_current_network_class(state: &Arc<AppState>) -> Result<(), ApiErr
         crate::transfer_runner::spawn(state.clone(), task.task_id);
     }
     Ok(())
+}
+
+/// DST-009：把 CID 异步推送给所有显式配置的第三方 Kubo 兼容 Pin 服务。
+/// 失败仅记日志（第三方服务可用性不影响本地操作结果）。
+fn spawn_remote_pins(state: &Arc<AppState>, cid: String) {
+    let services = state.node.config().pin_services;
+    if services.is_empty() {
+        return;
+    }
+    tokio::spawn(async move {
+        for service in services {
+            let client = app_core::IpfsClient::new(service);
+            if let Err(error) = client.pin_add(&cid).await {
+                tracing::warn!(%cid, %error, "third-party pin service failed");
+            }
+        }
+    });
 }
 
 /// PLG-009：把当前生效的 Revoke 策略应用到已安装插件。
@@ -1144,6 +1165,10 @@ async fn publish(
         .map_err(|error| map_idempotency("publication", "publish", error))?;
     if !replayed {
         publish_publication_event(&state, &receipt);
+        // DST-009：发布后把 Manifest CID 推送给配置的第三方 Pin 服务。
+        if let Some(manifest_cid) = receipt.manifest_cid.clone() {
+            spawn_remote_pins(&state, manifest_cid);
+        }
     }
     Ok(Json(receipt))
 }
@@ -2454,7 +2479,7 @@ async fn set_favorite(
     let request_id = request_id(&headers, request.request_id.as_deref())?;
     let fingerprint =
         crate::state::sha256_hex(&serde_json::to_vec(&(&id, request.favorite)).unwrap_or_default());
-    let (track, _) = state
+    let (track, replayed) = state
         .idempotency
         .execute("library.favorite", &request_id, &fingerprint, || {
             state
@@ -2467,6 +2492,35 @@ async fn set_favorite(
                 .ok_or_else(|| format!("track `{id}` does not exist"))
         })
         .map_err(|error| map_idempotency("library", "favorite", error))?;
+    if request.favorite && !replayed && state.node.config().assist_pin_favorites {
+        // 收藏协助 Pin（DST-009）：本地已有对象直接 Pin，否则建立幂等
+        // Pin 传输任务（服从网络类别策略），并推送给第三方 Pin 服务。
+        for source in &track.sources {
+            let Some(cid) = source.content_cid.clone() else {
+                continue;
+            };
+            if state.node.pin(&cid).is_err() {
+                let Ok(task) = state.transfers.create_with_priority(
+                    &format!("assist-pin-{id}-{cid}"),
+                    TransferKind::Pin,
+                    cid.clone(),
+                    None,
+                    NetworkPolicyV1 {
+                        wifi_only: false,
+                        cellular_limit_bytes: None,
+                        max_concurrency: 2,
+                    },
+                    0,
+                ) else {
+                    continue;
+                };
+                if task.state == jimmusic_protocol::TransferState::Queued {
+                    crate::transfer_runner::spawn(state.clone(), task.task_id);
+                }
+            }
+            spawn_remote_pins(&state, cid);
+        }
+    }
     Ok(Json(track))
 }
 
@@ -3610,6 +3664,228 @@ mod tests {
             .last_error
             .as_deref()
             .is_some_and(|error| error.contains("revoked")));
+    }
+
+    /// 注册身份并导入一个 rendition 内容 CID 为 [content_cid] 的签名 Manifest。
+    async fn import_assist_track(
+        state: &Arc<AppState>,
+        key: &SigningKey,
+        content_cid: &str,
+    ) -> String {
+        use jimmusic_protocol::LicenseDeclaration;
+        let public_key = hex::encode(key.verifying_key().to_bytes());
+        let identity = PublisherIdentityV1 {
+            schema_version: SCHEMA_V1,
+            publisher_id: app_core::publication_service::publisher_id_from_public_key(&public_key),
+            public_key,
+            display_name: "AssistPin Publisher".into(),
+            created_at: 1,
+            previous_key: None,
+            rotation_proof: None,
+            revoked_at: None,
+            revocation_proof: None,
+        };
+        let identity_cid = state
+            .publications
+            .register_identity(identity, &state.node)
+            .unwrap();
+        let mut manifest = MusicManifestV1 {
+            schema_version: SCHEMA_V1,
+            work_id: "assist-work".into(),
+            release_id: "assist-release".into(),
+            title: "Assist".into(),
+            artists: vec!["Artist".into()],
+            album: "Album".into(),
+            track_number: Some(1),
+            disc_number: Some(1),
+            duration_ms: 1_000,
+            language: "en".into(),
+            genres: Vec::new(),
+            tags: Vec::new(),
+            cover_cid: None,
+            lyrics_cid: None,
+            credits: BTreeMap::new(),
+            license: LicenseDeclaration {
+                identifier: "CC-BY-4.0".into(),
+                rights_statement: None,
+                allows_redistribution: true,
+            },
+            content_labels: vec!["clean".into()],
+            renditions: vec![jimmusic_protocol::MusicRenditionV1 {
+                rendition_id: "original".into(),
+                content_cid: content_cid.into(),
+                container: "flac".into(),
+                codec: "flac".into(),
+                profile: String::new(),
+                sample_rate: 44_100,
+                bit_depth: 24,
+                channels: 2,
+                channel_layout: "stereo".into(),
+                duration_ms: 1_000,
+                byte_length: 10,
+                lossless: true,
+                original: true,
+                streamable: true,
+            }],
+            publisher_identity_cid: identity_cid,
+            created_at: 2,
+            updated_at: 2,
+            publisher_signature: None,
+        };
+        manifest.publisher_signature = Some(hex::encode(
+            key.sign(&manifest.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        let manifest_cid = cid_v1_for(&manifest).unwrap();
+        // import_manifest 只从 Idempotency-Key 头取 request_id。
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/library/manifests/{manifest_cid}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "assist-import")
+                    .body(Body::from(serde_json::to_vec(&manifest).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let track: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(status, StatusCode::OK, "{track}");
+        track["track_id"].as_str().unwrap().to_string()
+    }
+
+    #[tokio::test]
+    async fn favorite_assist_pin_creates_local_pin_and_remote_push() {
+        use jimmusic_protocol::cid_v1_for_bytes;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let content_cid =
+            cid_v1_for_bytes(app_core::node_service::RAW_CODEC, b"assist-pin-content");
+        let pin_service = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/v0/pin/add"))
+            .and(query_param("arg", content_cid.as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({"Pins": [content_cid]})),
+            )
+            .expect(1)
+            .mount(&pin_service)
+            .await;
+
+        let (state, _dir) = state();
+        // 本地 CAS 已有内容对象（本地 Pin 路径）。
+        state
+            .node
+            .put_verified(
+                &content_cid,
+                app_core::node_service::RAW_CODEC,
+                b"assist-pin-content",
+                false,
+                false,
+            )
+            .unwrap();
+        let mut config = node_config_body(None);
+        config["assist_pin_favorites"] = serde_json::json!(true);
+        config["pin_services"] = serde_json::json!([pin_service.uri()]);
+        let (status, _) = call(routes(), state.clone(), "PUT", "/node/config", config).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let key = SigningKey::from_bytes(&[26; 32]);
+        let track_id = import_assist_track(&state, &key, &content_cid).await;
+
+        let (status, _) = call(
+            routes(),
+            state.clone(),
+            "PUT",
+            &format!("/library/tracks/{track_id}/favorite"),
+            serde_json::json!({"favorite": true, "request_id": "assist-fav"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, pins) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/pins",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            pins.as_array().unwrap().iter().any(|entry| {
+                entry["cid"] == content_cid && entry["health"]["local_pin"] == true
+            }),
+            "{pins}"
+        );
+
+        // 第三方 pin/add 收到推送。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let requests = loop {
+            if let Some(requests) = pin_service.received_requests().await {
+                if !requests.is_empty() {
+                    break requests;
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("remote pin service did not receive pin/add");
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        };
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].url.path(), "/api/v0/pin/add");
+        assert_eq!(requests[0].url.query_pairs().count(), 1);
+        assert_eq!(
+            requests[0].url.query_pairs().next(),
+            Some((
+                std::borrow::Cow::Borrowed("arg"),
+                content_cid.clone().into()
+            ))
+        );
+    }
+
+    #[tokio::test]
+    async fn favorite_without_assist_pin_does_not_pin() {
+        use jimmusic_protocol::cid_v1_for_bytes;
+        let (state, _dir) = state();
+        let content_cid = cid_v1_for_bytes(app_core::node_service::RAW_CODEC, b"no-assist-content");
+        state
+            .node
+            .put_verified(
+                &content_cid,
+                app_core::node_service::RAW_CODEC,
+                b"no-assist-content",
+                false,
+                false,
+            )
+            .unwrap();
+        let key = SigningKey::from_bytes(&[27; 32]);
+        let track_id = import_assist_track(&state, &key, &content_cid).await;
+
+        let (status, _) = call(
+            routes(),
+            state.clone(),
+            "PUT",
+            &format!("/library/tracks/{track_id}/favorite"),
+            serde_json::json!({"favorite": true, "request_id": "assist-fav"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+
+        let (status, pins) = call(routes(), state, "GET", "/pins", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            pins.as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry["cid"] != content_cid),
+            "assist pin must not run when disabled: {pins}"
+        );
     }
 
     #[tokio::test]

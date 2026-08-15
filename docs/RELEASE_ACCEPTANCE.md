@@ -9,7 +9,7 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（230） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别策略与策略撤销自动停用，workspace/all targets/all features |
+| Rust tests | 通过（232） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别策略、策略撤销自动停用与收藏协助 Pin，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
@@ -26,6 +26,7 @@
 | 网络类别策略 | 通过 | 网络类别声明驱动仅 Wi-Fi/计量开关的传输暂停与自动恢复（只恢复网络暂停任务）；runner 执行前复查；上传限速按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示；服务 2 项 + API 2 项测试 |
 | 插件撤销自动停用 | 通过 | 社区 Policy Revoke 事件在摄取与刷新后自动应用到已安装插件（manifest CID 匹配 → Revoked + 事件推送，幂等）；API 测试 |
 | 播放页状态展示 | 通过 | 播放页显示真实来源标签、缓冲位置与边下边播下载状态（字节/状态/Provider），无模拟数据；4 项测试 |
+| 收藏协助 Pin | 通过 | 收藏时按显式开关协助 Pin 内容 CID（本地直 Pin / 幂等 Pin 传输任务）；显式 Pin 与发布后推送第三方 Kubo 兼容 Pin 服务，端点校验；API 测试 2 项 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
 | P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 64、部分实现 58、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
