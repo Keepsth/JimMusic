@@ -695,6 +695,27 @@ async fn apply_current_network_class(state: &Arc<AppState>) -> Result<(), ApiErr
     Ok(())
 }
 
+/// PLG-009：把当前生效的 Revoke 策略应用到已安装插件。
+/// 目标 CID 与各版本 manifest CID 匹配；撤销后记录进入 Revoked 状态并推送事件。
+/// 幂等：重复调用不会重复产生副作用。
+fn apply_policy_revocations(state: &Arc<AppState>) {
+    let targets = state.community.active_revoke_targets(now());
+    for cid in targets {
+        match state.lifecycle.revoke_release(&cid) {
+            Ok(records) => {
+                for record in records {
+                    state.events.publish(Event::PluginChanged {
+                        plugin_id: record.plugin_id,
+                        state: "revoked".into(),
+                        version: record.active_version,
+                    });
+                }
+            }
+            Err(error) => tracing::warn!(%error, %cid, "policy revocation could not be applied"),
+        }
+    }
+}
+
 async fn list_transfers(
     State(state): State<Arc<AppState>>,
 ) -> Json<Vec<jimmusic_protocol::TransferTaskV1>> {
@@ -1593,6 +1614,7 @@ async fn refresh_source(
         source_id: id.clone(),
         state: "refreshed".into(),
     });
+    apply_policy_revocations(&state);
     Ok(Json(serde_json::json!({
         "source_id": id,
         "catalog_ingested": catalog_ingested,
@@ -1678,6 +1700,7 @@ async fn ingest_policy(
     state
         .events
         .publish(Event::PolicyChanged { target, decision });
+    apply_policy_revocations(&state);
     Ok(Json(serde_json::json!({"event_cid": cid})))
 }
 
@@ -3433,6 +3456,160 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Bitswap"));
+    }
+
+    #[tokio::test]
+    async fn policy_revoke_auto_disables_installed_plugin() {
+        use app_core::node_service::RAW_CODEC;
+        use jimmusic_protocol::{
+            cid_v1_for, cid_v1_for_bytes, PluginArtifactV1, PluginRuntime, PolicyAction,
+        };
+        use std::collections::BTreeSet;
+
+        let (state, _dir) = state();
+        // 安装官方签名插件。
+        let artifact = b"plugin-artifact-bytes".to_vec();
+        let publisher = SigningKey::from_bytes(&[24; 32]);
+        let mut manifest = PluginManifestV1 {
+            schema_version: SCHEMA_V1,
+            plugin_id: "org.example.revoketest".into(),
+            name: "RevokeTest".into(),
+            version: "1.0.0".into(),
+            publisher: "org.example".into(),
+            plugin_kind: "audio_output".into(),
+            interface_versions: BTreeMap::from([("audio_output".into(), "2".into())]),
+            minimum_core_version: "2.0.0".into(),
+            maximum_core_version: "2.9.9".into(),
+            artifacts: vec![PluginArtifactV1 {
+                artifact_cid: cid_v1_for_bytes(RAW_CODEC, &artifact),
+                platform: "linux".into(),
+                architecture: "x86_64".into(),
+                runtime: PluginRuntime::Native,
+                entrypoint: "librevoke.so".into(),
+                byte_length: artifact.len() as u64,
+                sha256: crate::state::sha256_hex(&artifact),
+                provenance_cid: None,
+                sbom_cid: Some("bafysbom".into()),
+                sandbox_profile: "official-native".into(),
+                required_host_capabilities: vec!["audio_device".into()],
+                hardware_requirements: Vec::new(),
+            }],
+            capabilities: vec!["audio_output".into()],
+            permissions: BTreeSet::from([PluginPermission::AudioDevice]),
+            dependencies: Vec::new(),
+            conflicts: Vec::new(),
+            configuration_schema_cid: "bafyschema".into(),
+            state_schema_version: 1,
+            license: "GPL-3.0-only".into(),
+            release_notes_cid: None,
+            previous_release_cid: None,
+            signature: None,
+            revoked_at: None,
+        };
+        manifest.signature = Some(hex::encode(
+            publisher
+                .sign(&manifest.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        let manifest_cid = cid_v1_for(&manifest).unwrap();
+        let outcome = state
+            .lifecycle
+            .install(
+                manifest,
+                &artifact,
+                InstallContext {
+                    request_id: "revoke-test-install".into(),
+                    platform: "linux".into(),
+                    architecture: "x86_64".into(),
+                    core_version: "2.0.0".into(),
+                    public_key: hex::encode(publisher.verifying_key().to_bytes()),
+                    granted_permissions: BTreeSet::from([PluginPermission::AudioDevice]),
+                    allow_community_native: true,
+                },
+            )
+            .unwrap();
+        assert!(!outcome.idempotent_replay);
+        assert_eq!(
+            state
+                .lifecycle
+                .get("org.example.revoketest")
+                .unwrap()
+                .lifecycle_state,
+            jimmusic_protocol::PluginLifecycleState::Installed
+        );
+
+        // 社区源发布 Revoke 策略事件。
+        let maintainer = SigningKey::from_bytes(&[25; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "policy.example".into(),
+            name: "Policy".into(),
+            description: "revocation test source".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+
+        let mut revoke = jimmusic_protocol::PolicyEventV1 {
+            schema_version: SCHEMA_V1,
+            action: PolicyAction::Revoke,
+            target_type: "cid".into(),
+            target: manifest_cid.clone(),
+            reason_code: "security".into(),
+            description: "compromised release".into(),
+            evidence_cids: Vec::new(),
+            scope: Vec::new(),
+            issued_at: 2,
+            expires_at: None,
+            sequence: 0,
+            previous_event_cid: None,
+            signature: None,
+        };
+        revoke.signature = Some(hex::encode(
+            maintainer
+                .sign(&revoke.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        let (status, body) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/community-sources/policy.example/policy-events",
+            serde_json::to_value(revoke).unwrap(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+
+        // PLG-009：撤销事件摄入后已安装插件被自动停用并进入 Revoked 状态。
+        let record = state.lifecycle.get("org.example.revoketest").unwrap();
+        assert_eq!(
+            record.lifecycle_state,
+            jimmusic_protocol::PluginLifecycleState::Revoked
+        );
+        assert!(record
+            .last_error
+            .as_deref()
+            .is_some_and(|error| error.contains("revoked")));
     }
 
     #[tokio::test]

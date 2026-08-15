@@ -64,7 +64,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-006 | 本机通过 | 权限声明/授权/撤销持久化；Wasmtime Host 使用 owner-scoped 不透明句柄并即时撤销；越权测试 | 七端 UI 与运行时集成证据待 RC |
 | PLG-007 | 部分实现 | 官方原生、社区沙箱、社区原生高级通道与审计 | 桌面二次确认/持续警告 E2E 不完整 |
 | PLG-008 | 本机通过 | service owner 注册冲突与微内核保留服务拒绝测试 | 尚无跨进程 service host |
-| PLG-009 | 部分实现 | revoked manifest 在 preflight 被拒绝，可停用/隔离 | 远程撤销事件刷新后自动停用未实现 |
+| PLG-009 | 本机通过 | revoked manifest 在 preflight 被拒绝，可停用/隔离；社区 Policy Revoke 事件在摄取与刷新后自动应用：`active_revoke_targets` 收集生效（未过期、来源启用）目标，`revoke_release` 按 manifest CID 匹配已安装版本并置 Revoked + 推送 `plugin.state_changed`，幂等；API 测试 | 撤销 Feed 快照防回滚与七端交互待验收 |
 | PLG-010 | 本机通过 | 连续失败、quarantine/safe mode；Wasmtime fuel、内存/表限制和 trap 测试 | 社区原生插件仍需独立进程超时探针 |
 | PLG-011 | 部分实现 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON | 敏感字段控件和完整迁移策略未实现 |
 | PLG-012 | 本机通过 | platform/arch/core ABI/依赖/冲突/权限在下载前 preflight | 七端目录数据待实际验证 |

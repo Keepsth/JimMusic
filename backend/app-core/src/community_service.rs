@@ -797,6 +797,31 @@ impl CommunitySourceService {
     }
 
     /// 本地屏蔽优先；否则取所有启用且未过期 Policy 中最高严重度，并列出决策来源。
+    /// 当前生效（未过期、来源策略已启用）的 Revoke 决策目标集合。
+    /// 插件管理面用它在下一次策略刷新/摄取后自动停用被撤销的发布
+    /// （PLG-009）：目标按内容寻址 CID 匹配已安装版本的 manifest CID。
+    pub fn active_revoke_targets(&self, now: i64) -> BTreeSet<String> {
+        let state = self.store.snapshot();
+        let mut targets = BTreeSet::new();
+        for (source_id, feed) in &state.policy_feeds {
+            if !state
+                .sources
+                .get(source_id)
+                .is_some_and(|source| source.policy_enabled)
+            {
+                continue;
+            }
+            for event in feed {
+                if event.event.action == PolicyAction::Revoke
+                    && !event.event.expires_at.is_some_and(|expiry| expiry <= now)
+                {
+                    targets.insert(event.event.target.clone());
+                }
+            }
+        }
+        targets
+    }
+
     pub fn policy_decision(&self, target: &str, now: i64) -> PolicyDecision {
         let state = self.store.snapshot();
         if let Some(reason) = state.local_blocks.get(target) {
