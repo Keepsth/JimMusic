@@ -179,7 +179,7 @@
 - Web 真实浏览器中继、Kubo、Android/iOS/HarmonyOS P2P 构建/实机及移动网络对象 UI 闭环待证；
 - Web/移动插件执行载体与社区原生插件独立进程隔离待闭环；
 - Web gapless/crossfade、真实独占输出、ASIO/CoreAudio Hog、ALSA hw、DSD Native/DoP 待实机；
-- Flutter 本地曲库与后端 Manifest/社区曲库尚未统一；移动后台/锁屏控制缺失；
+- 曲库统一同步已落地（本地优先、来源可区分）；移动后台/锁屏控制缺失；
 - 内置签名启动源当前没有远端 Feed 头，二维码相机扫描缺失（Feed 快照/gzip/上限已落地，远端实测待补）；
 - 七端同候选安装/离线/E2E、硬件实验室、M0 资源/两小时、无障碍、迁移/断电恢复报告未取得；
 - 受控 tag 的签名产物、SBOM、摘要和 provenance 尚未实际生成并复验。
