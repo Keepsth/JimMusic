@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/lyrics.dart';
+import '../models/playback_mode.dart';
 import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../widgets/geek_cover.dart';
@@ -250,7 +251,30 @@ class PlayerScreen extends StatelessWidget {
                   ],
                 ),
 
-                const SizedBox(height: 20),
+                const SizedBox(height: 12),
+                // 播放模式切换（PLR-102）：顺序 / 列表循环 / 单曲循环 / 随机。
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: '播放模式：${_modeLabel(player.playbackMode)}',
+                      onPressed: player.cyclePlaybackMode,
+                      icon: Icon(
+                        _modeIcon(player.playbackMode),
+                        color: scheme.onSurfaceVariant,
+                        size: 20,
+                      ),
+                    ),
+                    Text(
+                      _modeLabel(player.playbackMode),
+                      style: TextStyle(
+                        color: scheme.onSurfaceVariant,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
                 Row(
                   children: [
                     IconButton(
@@ -370,3 +394,17 @@ class _PlaybackStatusLine extends StatelessWidget {
     );
   }
 }
+
+IconData _modeIcon(PlaybackMode mode) => switch (mode) {
+  PlaybackMode.sequence => Icons.arrow_right_alt,
+  PlaybackMode.repeatAll => Icons.repeat,
+  PlaybackMode.repeatOne => Icons.repeat_one,
+  PlaybackMode.shuffle => Icons.shuffle,
+};
+
+String _modeLabel(PlaybackMode mode) => switch (mode) {
+  PlaybackMode.sequence => '顺序播放',
+  PlaybackMode.repeatAll => '列表循环',
+  PlaybackMode.repeatOne => '单曲循环',
+  PlaybackMode.shuffle => '随机播放',
+};

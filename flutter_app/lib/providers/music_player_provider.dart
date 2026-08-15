@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 
 import '../models/music.dart';
+import '../models/playback_mode.dart';
 import '../models/playlist.dart';
 import '../services/media_scanner_service.dart';
 import '../services/persistence_service.dart';
@@ -25,6 +27,7 @@ class MusicPlayerProvider extends ChangeNotifier {
   String? _playbackError;
   int _crossfadeMilliseconds = 0;
   bool _crossfadeEqualPower = true;
+  PlaybackMode _playbackMode = PlaybackMode.sequence;
 
   /// 已收藏曲目（用 id 集合表示，跨列表共享收藏状态）。
   Set<String> _favoriteIds = {};
@@ -79,6 +82,7 @@ class MusicPlayerProvider extends ChangeNotifier {
   String? get playbackError => _playbackError;
   int get crossfadeMilliseconds => _crossfadeMilliseconds;
   bool get crossfadeEqualPower => _crossfadeEqualPower;
+  PlaybackMode get playbackMode => _playbackMode;
   bool get supportsNativeTransitions =>
       _bridge != null && _bridge!.readyForPlayback;
   Set<String> get favoriteIds => _favoriteIds;
@@ -188,6 +192,10 @@ class MusicPlayerProvider extends ChangeNotifier {
             .clamp(0, 30_000)
             .toInt();
     _crossfadeEqualPower = session['crossfadeEqualPower'] as bool? ?? true;
+    _playbackMode = PlaybackMode.values.firstWhere(
+      (mode) => mode.name == session['playbackMode'],
+      orElse: () => PlaybackMode.sequence,
+    );
     _currentPosition = ((session['position'] as num?)?.toDouble() ?? 0.0)
         .clamp(0.0, double.infinity)
         .toDouble();
@@ -622,6 +630,34 @@ class MusicPlayerProvider extends ChangeNotifier {
     await _saveSession();
   }
 
+  /// 循环切换播放模式（PLR-102）：顺序 → 列表循环 → 单曲循环 → 随机。
+  Future<void> cyclePlaybackMode() async {
+    _playbackMode = switch (_playbackMode) {
+      PlaybackMode.sequence => PlaybackMode.repeatAll,
+      PlaybackMode.repeatAll => PlaybackMode.repeatOne,
+      PlaybackMode.repeatOne => PlaybackMode.shuffle,
+      PlaybackMode.shuffle => PlaybackMode.sequence,
+    };
+    await _applyPlaybackModeToAudio();
+    notifyListeners();
+    await _saveSession();
+  }
+
+  Future<void> _applyPlaybackModeToAudio() async {
+    final audio = _audio;
+    if (audio == null) return;
+    try {
+      await audio.setLoopMode(switch (_playbackMode) {
+        PlaybackMode.sequence => LoopMode.off,
+        PlaybackMode.repeatOne => LoopMode.one,
+        PlaybackMode.repeatAll || PlaybackMode.shuffle => LoopMode.all,
+      });
+      await audio.setShuffleModeEnabled(_playbackMode == PlaybackMode.shuffle);
+    } catch (_) {
+      // 平台不支持时静默保留当前行为。
+    }
+  }
+
   void addToPlaylist(Music music) {
     _playlist.add(music);
     notifyListeners();
@@ -643,7 +679,11 @@ class MusicPlayerProvider extends ChangeNotifier {
   /// 经 Rust 桥播放：把本地曲目队列交给后端 Player，由后端负责自动切歌。成功返回 true。
   bool _playViaBridge(Music target) {
     try {
-      final tracks = _playableTracks;
+      var tracks = _playableTracks;
+      // 随机模式：先洗牌再交给桥（桥仍按列表推进）。
+      if (_playbackMode == PlaybackMode.shuffle) {
+        tracks = shuffledPlaylist(tracks, Random());
+      }
       final index = tracks.indexWhere((m) => m.id == target.id);
       if (index < 0) return false;
 
@@ -683,12 +723,30 @@ class MusicPlayerProvider extends ChangeNotifier {
     if (!_bridgeActive) return;
     if (event.eventType == PlaybackEventType.playing) {
       _playerState = PlayerState.playing;
-      // 后端自动切歌后，同步当前曲目。
+      // 后端自动切歌后，同步当前曲目并应用队列边界模式（PLR-102）。
       final tracks = _playableTracks;
       final idx = _bridge?.currentIndex() ?? 0;
       if (tracks.isNotEmpty && idx >= 0 && idx < tracks.length) {
         final now = tracks[idx];
-        if (now.id != _currentMusic?.id) {
+        final isAdvance = now.id != _currentMusic?.id;
+        final decision = evaluateAdvance(
+          isAdvance: isAdvance,
+          currentIndex: _currentIndex,
+          advancedIndex: idx,
+          mode: _playbackMode,
+        );
+        switch (decision) {
+          case PlaybackDecision.replayCurrent:
+            // 单曲循环：桥已切走，把当前曲目重新拉起。
+            _bridge?.playTrack(_currentIndex);
+            return;
+          case PlaybackDecision.stop:
+            unawaited(stop());
+            return;
+          case PlaybackDecision.accept:
+            break;
+        }
+        if (isAdvance) {
           _currentMusic = now;
           _currentPosition = 0.0;
           final inPlaylist = _playlist.indexOf(now);
@@ -780,6 +838,7 @@ class MusicPlayerProvider extends ChangeNotifier {
       ),
     );
     await audio.setVolume(_muted ? 0.0 : _volume);
+    await _applyPlaybackModeToAudio();
     return audio;
   }
 
@@ -803,6 +862,7 @@ class MusicPlayerProvider extends ChangeNotifier {
     'muted': _muted,
     'crossfadeMilliseconds': _crossfadeMilliseconds,
     'crossfadeEqualPower': _crossfadeEqualPower,
+    'playbackMode': _playbackMode.name,
     'autoPlay': false,
   });
 

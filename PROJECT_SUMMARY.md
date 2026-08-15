@@ -72,9 +72,9 @@
 - Rust format、Clippy（all targets/all features，`-D warnings`）和 240 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，56 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+- Flutter analyze 零问题，61 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
   边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
-  本地化、发布者索引、离线队列提示与曲库统一同步）；
+  本地化、发布者索引、离线队列提示、播放模式边界与曲库统一同步）；
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；
@@ -103,6 +103,9 @@
   统一匹配，Flutter 曲库同步映射并纳入列表搜索；
 - 离线刷新队列（COM-008）：网络不可用时社区源刷新进入持久队列（503 + retryable 显式
   告知），网络恢复后下一次刷新自动排空；社区页展示排队条目与立即重试；
+- 播放模式（PLR-102，P1）：顺序/列表循环/单曲循环/随机——just_audio LoopMode/Shuffle
+  与桥边界决策（单曲循环回拉当前曲目、顺序模式绕回队首即停止、随机先洗牌再入队），
+  播放页模式按钮，模式持久化；
 - 错误本地化（API-004）：Flutter 统一把稳定错误信封映射为本地化文案、重试建议与网络
   恢复提示，控制台横幅与传输错误行统一消费；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
