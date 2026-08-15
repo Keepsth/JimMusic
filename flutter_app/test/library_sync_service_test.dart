@@ -15,8 +15,7 @@ class _SyncFakeApi extends ControlApi {
   final List<String> mutations = [];
 
   @override
-  Future<dynamic> get(String path) async =>
-      gets[path] ?? const <dynamic>[];
+  Future<dynamic> get(String path) async => gets[path] ?? const <dynamic>[];
 
   @override
   Future<dynamic> post(
@@ -64,10 +63,14 @@ void main() {
   group('backendStableId', () {
     test('与后端 stable_id 派生规则一致（跨语言黄金向量）', () {
       // 后端: jm_ + sha256("local-track\0/tmp/local.mp3") 前 24 hex。
-      expect(backendStableId('local-track', utf8.encode('/tmp/local.mp3')),
-          'jm_f076dbb1c7ceb56bf6172c2f');
-      expect(backendLocalTrackId('/tmp/local.mp3'),
-          'jm_f076dbb1c7ceb56bf6172c2f');
+      expect(
+        backendStableId('local-track', utf8.encode('/tmp/local.mp3')),
+        'jm_f076dbb1c7ceb56bf6172c2f',
+      );
+      expect(
+        backendLocalTrackId('/tmp/local.mp3'),
+        'jm_f076dbb1c7ceb56bf6172c2f',
+      );
     });
   });
 
@@ -120,6 +123,37 @@ void main() {
         ],
       })!;
       expect(music.publisher, 'bafypublisher');
+    });
+
+    test('社区策略决策随曲目映射（COM-006）', () {
+      final music = musicFromLibraryTrack({
+        'track_id': 'jm_policy',
+        'title': 'T',
+        'artists': const [],
+        'album': '',
+        'manifest_cid': 'bafymanifest',
+        'policy': {
+          'target': 'bafymanifest',
+          'action': 'warn',
+          'reason': '社区标记',
+          'source_ids': ['src.example'],
+          'expires_at': null,
+          'locally_overridden': false,
+        },
+        'sources': [
+          {
+            'kind': 'ipfs',
+            'uri': 'ipfs://x',
+            'content_cid': 'bafyr',
+            'container': 'flac',
+            'codec': 'flac',
+            'availability': 'offline',
+          },
+        ],
+      })!;
+      expect(music.policyAction, 'warn');
+      expect(music.policyReason, '社区标记');
+      expect(music.policySourceIds, ['src.example']);
     });
 
     test('本地文件源保留路径且可用', () {
@@ -233,7 +267,12 @@ void main() {
       expect(player.currentPosition, 42.0);
       expect(player.playerState, PlayerState.stopped);
       expect(player.playlists.containsKey('远端歌单'), isTrue);
-      expect(player.isFavorite(player.library.firstWhere((m) => m.id == 'jm_remote1')), isTrue);
+      expect(
+        player.isFavorite(
+          player.library.firstWhere((m) => m.id == 'jm_remote1'),
+        ),
+        isTrue,
+      );
 
       final mutations = api.mutations.join('\n');
       expect(mutations, contains('POST /library/tracks/import-local'));
@@ -260,10 +299,7 @@ void main() {
         ),
       ]);
       await player.createPlaylist('我的歌单');
-      await player.addToNamedPlaylist(
-        '我的歌单',
-        player.library.first,
-      );
+      await player.addToNamedPlaylist('我的歌单', player.library.first);
 
       final report = await LibrarySyncService().sync(api, player);
       expect(report.playlistsUp, 1);

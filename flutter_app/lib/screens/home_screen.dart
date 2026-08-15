@@ -5,6 +5,7 @@ import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../widgets/music_list_item.dart';
 import '../widgets/now_playing_bar.dart';
+import '../widgets/policy_gate.dart';
 import 'favorites_screen.dart';
 import 'player_screen.dart';
 import 'playlists_screen.dart';
@@ -166,27 +167,32 @@ class LibraryTab extends StatelessWidget {
                       isPlaying:
                           player.currentMusic?.id == music.id &&
                           player.isPlaying,
+                      // COM-006：精确打开先过策略门禁；
                       // PLR-007：网络曲目（Manifest/社区，无本地路径）与
                       // 本地曲目走同一播放入口——按内容 CID 建传输任务并边下边播。
-                      onTap: () {
-                        final control =
-                            context.read<ControlPlaneProvider>();
-                        final hasLocalPath =
-                            music.filePath != null &&
-                            music.filePath!.isNotEmpty;
-                        final hasCid =
-                            music.renditionCid != null ||
-                            music.manifestCid != null;
-                        if (!hasLocalPath && hasCid && control.connected) {
-                          player.playNetworkTrack(
-                            music,
-                            endpoint: control.endpoint,
-                            token: control.token,
-                          );
-                        } else {
-                          player.play(music);
-                        }
-                      },
+                      onTap: () => playTrackWithPolicy(
+                        context,
+                        music,
+                        onPlay: () async {
+                          final control = context.read<ControlPlaneProvider>();
+                          final hasLocalPath =
+                              music.filePath != null &&
+                              music.filePath!.isNotEmpty;
+                          final hasCid =
+                              music.renditionCid != null ||
+                              music.manifestCid != null;
+                          if (!hasLocalPath && hasCid && control.connected) {
+                            await player.playNetworkTrack(
+                              music,
+                              endpoint: control.endpoint,
+                              token: control.token,
+                            );
+                          } else {
+                            await player.play(music);
+                          }
+                        },
+                      ),
+                      onLongPress: () => showTrackDetailDialog(context, music),
                     );
                   },
                 ),

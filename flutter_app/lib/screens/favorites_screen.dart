@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/music_player_provider.dart';
 import '../widgets/music_list_item.dart';
+import '../widgets/policy_gate.dart';
 
 /// 收藏页：展示已收藏曲目。
 class FavoritesScreen extends StatelessWidget {
@@ -35,7 +36,8 @@ class FavoritesScreen extends StatelessWidget {
                       isPlaying:
                           player.currentMusic?.id == music.id &&
                           player.isPlaying,
-                      onTap: () => player.play(music),
+                      onTap: () => playTrackWithPolicy(context, music),
+                      onLongPress: () => showTrackDetailDialog(context, music),
                     );
                   },
                 ),

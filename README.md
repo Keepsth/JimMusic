@@ -17,6 +17,7 @@ JimMusic 2.0 是一个以 Rust 可信核心、版本化内容对象和 Flutter �
 - 版本化 DAG-CBOR 网络对象、Music Manifest/rendition、加密发布者身份、签名 Feed 与 Tombstone；
 - 持久传输任务：优先级调度、暂停/恢复/取消/重试、流式下载、限速、CID 校验和原子提交；
 - CommunitySource 的 Catalog/Policy 双 Feed、签名/序列/前序检查、增量刷新和策略合并；
+- 社区策略在搜索/详情/精确打开三入口统一应用：隐藏与阻止直接生效，警告需确认，非强制决策可本地覆盖；
 - 插件签名/CID/摘要预检、权限/依赖/冲突、事务安装、启停、配置、回滚、隔离和安全模式；
 - 社区插件目录：浏览/搜索 PluginManifest 条目，详情展示兼容性/已装状态/升级可用/撤销，可一键进入安装确认；
 - Wasmtime 沙箱默认无 WASI/环境权限，使用 fuel、内存/表上限及 owner-scoped capability handle；

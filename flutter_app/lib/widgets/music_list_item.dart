@@ -4,12 +4,16 @@ import 'package:provider/provider.dart';
 import '../models/music.dart';
 import '../providers/music_player_provider.dart';
 import 'geek_cover.dart';
+import 'policy_gate.dart';
 
 /// 音乐列表项：展示曲目信息、收藏状态与可选操作。
 class MusicListItem extends StatelessWidget {
   final Music music;
   final bool isPlaying;
   final VoidCallback onTap;
+
+  /// COM-006：详情入口（长按打开曲目详情与策略）。
+  final VoidCallback? onLongPress;
 
   /// 可选的额外 trailing 控件（如播放列表移除按钮）。
   final Widget? trailingExtra;
@@ -22,6 +26,7 @@ class MusicListItem extends StatelessWidget {
     required this.music,
     required this.isPlaying,
     required this.onTap,
+    this.onLongPress,
     this.trailingExtra,
     this.showFavorite = true,
   });
@@ -76,6 +81,16 @@ class MusicListItem extends StatelessWidget {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // COM-006：社区策略标记。
+              if (music.policyAction != null)
+                Tooltip(
+                  message: '社区策略：${policyPresentation(music.policyAction).$1}',
+                  child: Icon(
+                    policyPresentation(music.policyAction).$2,
+                    size: 14,
+                    color: scheme.error,
+                  ),
+                ),
               Tooltip(
                 message: '来源：${_sourceLabel(music.sourceType)}',
                 child: Icon(
@@ -110,6 +125,7 @@ class MusicListItem extends StatelessWidget {
           onTap: music.availability == TrackAvailability.available
               ? onTap
               : null,
+          onLongPress: onLongPress,
         );
       },
     );

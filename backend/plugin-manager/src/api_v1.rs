@@ -2333,8 +2333,14 @@ async fn search(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
 ) -> Json<serde_json::Value> {
+    let local: Vec<serde_json::Value> = state
+        .library
+        .search(&query.q)
+        .into_iter()
+        .map(|track| annotate_track_policy(&state, &track))
+        .collect();
     Json(serde_json::json!({
-        "local": state.library.search(&query.q),
+        "local": local,
         "community": state.community.search_catalog(&query.q, now()),
     }))
 }
@@ -2873,8 +2879,41 @@ async fn audio_stats(
 async fn library_tracks(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SearchQuery>,
-) -> Json<Vec<app_core::library_service::LibraryTrackV1>> {
-    Json(state.library.search(&query.q))
+) -> Json<serde_json::Value> {
+    let tracks: Vec<serde_json::Value> = state
+        .library
+        .search(&query.q)
+        .into_iter()
+        .map(|track| annotate_track_policy(&state, &track))
+        .collect();
+    Json(serde_json::json!(tracks))
+}
+
+/// COM-006：曲目级社区策略决策——优先 manifest CID，其次发布者身份 CID；
+/// 无决策时不附加 `policy` 字段（客户端视为无限制）。
+fn annotate_track_policy(
+    state: &AppState,
+    track: &app_core::library_service::LibraryTrackV1,
+) -> serde_json::Value {
+    let mut value = serde_json::to_value(track).unwrap_or_default();
+    for target in [track.manifest_cid.as_deref(), track.publisher.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        let decision = state.community.policy_decision(target, now());
+        if let Some(action) = decision.action {
+            value["policy"] = serde_json::json!({
+                "target": decision.target,
+                "action": action,
+                "reason": decision.reason,
+                "source_ids": decision.source_ids,
+                "expires_at": decision.expires_at,
+                "locally_overridden": decision.locally_overridden,
+            });
+            break;
+        }
+    }
+    value
 }
 
 #[derive(Debug, Deserialize)]
@@ -4630,6 +4669,170 @@ mod tests {
                 .any(|track| track["title"] == "Followed Track"),
             "followed publisher content must survive source removal: {search}"
         );
+    }
+
+    #[tokio::test]
+    async fn library_tracks_and_search_annotate_community_policy() {
+        use app_core::publication_service::publisher_id_from_public_key;
+        use jimmusic_protocol::{canonical_dag_cbor, LicenseDeclaration, PolicyAction};
+
+        let (state, _dir) = state();
+        // 发布者身份 + 签名 Manifest 存入本地 CAS。
+        let key = SigningKey::from_bytes(&[31; 32]);
+        let public_key = hex::encode(key.verifying_key().to_bytes());
+        let publisher_id = publisher_id_from_public_key(&public_key);
+        let identity_cid = state
+            .publications
+            .register_identity(
+                PublisherIdentityV1 {
+                    schema_version: SCHEMA_V1,
+                    publisher_id,
+                    public_key,
+                    display_name: "Policy Publisher".into(),
+                    created_at: 1,
+                    previous_key: None,
+                    rotation_proof: None,
+                    revoked_at: None,
+                    revocation_proof: None,
+                },
+                &state.node,
+            )
+            .unwrap();
+        let mut manifest = MusicManifestV1 {
+            schema_version: SCHEMA_V1,
+            work_id: "policy-work".into(),
+            release_id: "policy-release".into(),
+            title: "Policy Track".into(),
+            artists: vec!["Policy Artist".into()],
+            album: "Policy Album".into(),
+            track_number: Some(1),
+            disc_number: Some(1),
+            duration_ms: 1_000,
+            language: "en".into(),
+            genres: Vec::new(),
+            tags: Vec::new(),
+            cover_cid: None,
+            lyrics_cid: None,
+            credits: BTreeMap::new(),
+            license: LicenseDeclaration {
+                identifier: "CC-BY-4.0".into(),
+                rights_statement: None,
+                allows_redistribution: true,
+            },
+            content_labels: vec!["clean".into()],
+            renditions: vec![jimmusic_protocol::MusicRenditionV1 {
+                rendition_id: "original".into(),
+                content_cid: "bafypolicycontent".into(),
+                container: "flac".into(),
+                codec: "flac".into(),
+                profile: String::new(),
+                sample_rate: 44_100,
+                bit_depth: 24,
+                channels: 2,
+                channel_layout: "stereo".into(),
+                duration_ms: 1_000,
+                byte_length: 10,
+                lossless: true,
+                original: true,
+                streamable: true,
+            }],
+            publisher_identity_cid: identity_cid.clone(),
+            created_at: 2,
+            updated_at: 2,
+            publisher_signature: None,
+        };
+        manifest.publisher_signature = Some(hex::encode(
+            key.sign(&manifest.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        let manifest_cid = state
+            .node
+            .add_dag_cbor(&canonical_dag_cbor(&manifest).unwrap(), false)
+            .unwrap();
+
+        // 社区源发布 Block 策略事件（目标 = Manifest CID）。
+        let maintainer = SigningKey::from_bytes(&[32; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "policy.example".into(),
+            name: "Policy".into(),
+            description: "policy annotation test source".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+        state
+            .community
+            .ingest_policy(
+                "policy.example",
+                signed_policy_event(&maintainer, PolicyAction::Block, &manifest_cid, 0),
+                &state.node,
+            )
+            .unwrap();
+
+        // 导入 Manifest → 曲目带 manifest_cid 与 publisher。
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/library/manifests/{manifest_cid}"))
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "import-policy-track")
+                    .body(Body::from(serde_json::to_string(&manifest).unwrap()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // COM-006：搜索/详情/精确打开共用的数据源（library tracks）携带策略标注。
+        let (status, tracks) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/library/tracks",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let tracks = tracks.as_array().unwrap();
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(tracks[0]["policy"]["action"], "block");
+        assert_eq!(tracks[0]["policy"]["target"], manifest_cid);
+        assert_eq!(tracks[0]["policy"]["reason"], "Block from override test");
+
+        // /v1/search 的 local 结果同样标注。
+        let (status, found) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/search?q=Policy+Track",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(found["local"][0]["policy"]["action"], "block");
+        assert_eq!(found["local"][0]["policy"]["target"], manifest_cid);
     }
 
     fn signed_policy_event(

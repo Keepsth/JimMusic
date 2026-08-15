@@ -75,6 +75,8 @@ Music? musicFromLibraryTrack(Map<String, dynamic> track) {
       .whereType<String>()
       .toList();
   final durationMs = (track['duration_ms'] as num?)?.toInt();
+  // COM-006：后端统一标注的社区策略决策。
+  final policy = track['policy'] as Map<String, dynamic>?;
   return Music(
     id: trackId,
     title: '${track['title'] ?? trackId}',
@@ -92,6 +94,11 @@ Music? musicFromLibraryTrack(Map<String, dynamic> track) {
     sampleRate: (primary?['sample_rate'] as num?)?.toInt(),
     bitDepth: (primary?['bit_depth'] as num?)?.toInt(),
     channels: (primary?['channels'] as num?)?.toInt(),
+    policyAction: policy?['action'] as String?,
+    policyReason: policy?['reason'] as String?,
+    policySourceIds: (policy?['source_ids'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList(growable: false),
     isFavorite: track['favorite'] == true,
   );
 }
@@ -151,13 +158,12 @@ class LibrarySyncService {
     final report = LibrarySyncReport();
 
     // 1) 推送本地文件曲目。
-    for (final music
-        in player.library.where(
-          (m) =>
-              m.filePath != null &&
-              m.filePath!.isNotEmpty &&
-              m.sourceType == TrackSourceType.localFile,
-        )) {
+    for (final music in player.library.where(
+      (m) =>
+          m.filePath != null &&
+          m.filePath!.isNotEmpty &&
+          m.sourceType == TrackSourceType.localFile,
+    )) {
       final trackId = backendLocalTrackId(music.filePath!);
       try {
         await api.post(

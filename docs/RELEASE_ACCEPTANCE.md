@@ -9,11 +9,11 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（250） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
+| Rust tests | 通过（251） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、三入口策略标注、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（73） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、网络曲目播放入口、音乐目录设置、发布向导（含多 rendition 编辑）、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
+| Flutter tests | 通过（83） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、网络曲目播放入口、音乐目录设置、发布向导（含多 rendition 编辑）、三入口策略应用、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -31,6 +31,7 @@
 | 曲库统一同步 | 通过 | 本地文件推送（路径派生稳定 ID，跨语言黄金向量）、Manifest/社区拉取合并、收藏/歌单双向、会话推送或恢复（绝不自动播放）；控制台曲库同步页 + 列表来源图标；Flutter 6 项测试 |
 | 撤销防回滚 | 通过 | enable/rollback 对已撤销发布拒绝（含手工改回 Disabled 的绕过）；mutate_record 保留域错误语义；生命周期测试 2 项 |
 | 策略本地覆盖 | 通过 | 非强制策略（warn/demote/hide）可本地覆盖/取消，block/revoke 强制拒绝；社区页策略查询对话框；API 1 项 + Flutter 1 项测试 |
+| 三入口策略应用 | 通过 | 搜索/详情/精确打开统一应用社区策略：`/v1/library/tracks` 与 `/v1/search` 标注曲目策略（manifest CID 优先、发布者次之）；搜索移除 hide/block/revoke、降权 demote、标记 warn；长按详情展示策略与本地覆盖；播放前 block/revoke 拒绝、warn 确认；API 1 项 + Flutter 9 项测试 |
 | 蜂窝额度 | 通过 | 每任务蜂窝额度持久计量，超限暂停（结构化原因）并在回 Wi-Fi 后自动恢复；runner 按块计量并安全中止；服务测试 2 项 |
 | 错误本地化 | 通过 | Flutter 统一把稳定错误信封映射为本地化文案 + 重试建议 + 恢复提示，控制台横幅与传输错误行统一消费；5 项测试 |
 | 发布者全文索引 | 通过 | 曲库索引增加发布者身份 CID（Manifest 导入记录），标题/艺人/专辑/标签/发布者统一匹配；Flutter 同步映射并纳入列表搜索；服务 1 项 + Flutter 1 项测试 |
@@ -49,7 +50,7 @@
 | 发布向导 | 通过 | 元数据/权利声明 + 多 rendition 编辑（增删、ID/容器/编解码/采样率/位深/声道/字节长度、唯一 original）表单校验生成 Manifest（byte_length 正整数，满足后端校验），签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方服务）；5 项测试 |
 | 插件目录浏览 | 通过 | `GET /v1/plugins/catalog` 列出社区目录收录的 PluginManifest 条目并支持 `q` 搜索（CID/分类/标签/注解），`/catalog/{cid}` 详情解析 Manifest（JSON/DAG-CBOR 双编码）并返回 artifact_available/installed_state/active_version/update_available/revoked 摘要；插件页目录浏览/搜索/详情/安装（发布者公钥与权限确认，`ipfs://CID` 直取制品）；API 1 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 89、部分实现 33、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 90、部分实现 32、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

@@ -69,10 +69,10 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 250 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 251 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，73 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+- Flutter analyze 零问题，83 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
   边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
   本地化、发布者索引、离线队列提示、播放模式边界、声明式配置控件与敏感字段、
   网络曲目播放入口、音乐目录设置、发布向导、操作取消与曲库统一同步）；
@@ -99,6 +99,10 @@
   域错误语义在 mutate_record 中完整保留；
 - 策略本地覆盖（COM-011）：warn/demote/hide 可本地覆盖/取消（附申诉理由），block/revoke
   为强制决策拒绝覆盖；社区页提供策略查询与覆盖对话框；
+- 三入口策略应用（COM-006）：`/v1/library/tracks` 与 `/v1/search` 统一标注曲目社区策略
+  （manifest CID 优先、发布者身份次之）；搜索入口移除 hide/block/revoke 并降权 demote、
+  标记 warn；长按曲目打开详情（策略信息 + 非强制动作本地覆盖）；精确打开（播放）前
+  block/revoke 直接拒绝并解释、warn 二次确认；
 - 蜂窝额度（DST-010）：每任务蜂窝额度持久计量，超限结构化暂停并在回 Wi-Fi 后自动恢复；
 - 发布者全文索引（COM-005）：曲库索引记录发布者身份 CID，标题/艺人/专辑/标签/发布者
   统一匹配，Flutter 曲库同步映射并纳入列表搜索；

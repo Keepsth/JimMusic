@@ -3,15 +3,17 @@ import 'package:provider/provider.dart';
 
 import '../providers/music_player_provider.dart';
 import '../widgets/music_list_item.dart';
+import '../widgets/policy_gate.dart';
 
-/// 搜索页：按关键字搜索标题/艺术家/专辑。
+/// 搜索页：按关键字搜索标题/艺术家/专辑；搜索入口应用社区策略
+/// （COM-006：hide/block/revoke 移除、demote 降权、warn 标记）。
 class SearchScreen extends StatelessWidget {
   const SearchScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final player = context.watch<MusicPlayerProvider>();
-    final results = player.filteredLibrary;
+    final results = applyPolicyToSearch(player.filteredLibrary);
 
     return Column(
       children: [
@@ -41,7 +43,8 @@ class SearchScreen extends StatelessWidget {
                       isPlaying:
                           player.currentMusic?.id == music.id &&
                           player.isPlaying,
-                      onTap: () => player.play(music),
+                      onTap: () => playTrackWithPolicy(context, music),
+                      onLongPress: () => showTrackDetailDialog(context, music),
                     );
                   },
                 ),

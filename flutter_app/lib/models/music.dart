@@ -27,6 +27,11 @@ class Music {
   final String? publisher;
   final List<String> communitySourceIds;
 
+  /// COM-006：社区策略动作（warn/demote/hide/block/revoke），无决策时为 null。
+  final String? policyAction;
+  final String? policyReason;
+  final List<String> policySourceIds;
+
   /// 内存中的音频数据（Web 端导入时无文件路径，直接持有字节供播放）。
   final Uint8List? audioBytes;
 
@@ -58,6 +63,9 @@ class Music {
     this.channels,
     this.publisher,
     this.communitySourceIds = const [],
+    this.policyAction,
+    this.policyReason,
+    this.policySourceIds = const [],
     this.audioBytes,
     this.mimeType,
     this.isFavorite = false,
@@ -84,6 +92,9 @@ class Music {
     int? channels,
     String? publisher,
     List<String>? communitySourceIds,
+    String? policyAction,
+    String? policyReason,
+    List<String>? policySourceIds,
     Uint8List? audioBytes,
     String? mimeType,
     bool? isFavorite,
@@ -108,6 +119,9 @@ class Music {
       channels: channels ?? this.channels,
       publisher: publisher ?? this.publisher,
       communitySourceIds: communitySourceIds ?? this.communitySourceIds,
+      policyAction: policyAction ?? this.policyAction,
+      policyReason: policyReason ?? this.policyReason,
+      policySourceIds: policySourceIds ?? this.policySourceIds,
       audioBytes: audioBytes ?? this.audioBytes,
       mimeType: mimeType ?? this.mimeType,
       isFavorite: isFavorite ?? this.isFavorite,
@@ -134,6 +148,9 @@ class Music {
     'bitDepth': bitDepth,
     'channels': channels,
     'communitySourceIds': communitySourceIds,
+    'policyAction': policyAction,
+    'policyReason': policyReason,
+    'policySourceIds': policySourceIds,
     'isFavorite': isFavorite,
     'lyrics': lyrics,
   };
@@ -177,6 +194,11 @@ class Music {
           (map['communitySourceIds'] as List<dynamic>? ?? const [])
               .whereType<String>()
               .toList(growable: false),
+      policyAction: map['policyAction'] as String?,
+      policyReason: map['policyReason'] as String?,
+      policySourceIds: (map['policySourceIds'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .toList(growable: false),
       isFavorite: map['isFavorite'] as bool? ?? false,
       lyrics: map['lyrics'] as String?,
     );

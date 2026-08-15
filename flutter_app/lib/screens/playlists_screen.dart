@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/music_player_provider.dart';
 import '../widgets/music_list_item.dart';
+import '../widgets/policy_gate.dart';
 
 /// 播放列表页：管理多个播放列表。
 class PlaylistsScreen extends StatelessWidget {
@@ -120,7 +121,8 @@ class PlaylistDetailScreen extends StatelessWidget {
                   music: music,
                   isPlaying:
                       player.currentMusic?.id == music.id && player.isPlaying,
-                  onTap: () => player.play(music),
+                  onTap: () => playTrackWithPolicy(context, music),
+                  onLongPress: () => showTrackDetailDialog(context, music),
                   trailingExtra: IconButton(
                     icon: const Icon(Icons.remove_circle_outline),
                     onPressed: () =>

@@ -114,7 +114,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | COM-003 | 本机通过 | 已启用 Catalog 与本地索引可合并搜索，精确 CID API 存在；直接关注发布者：`POST/GET/DELETE /v1/community-sources/follows` 持久化关注（上限 4096），关注后把目录中该发布者的 Music Manifest 解析（本地 CAS/P2P、签名校验、单次 ≤128）导入媒体库，禁用/删除全部 Catalog 后仍可搜索播放（关注记录与曲库保留，取消关注不删用户数据）；社区页新增关注发布者 UI；API 测试 1 项 + Flutter 测试 1 项 | 关注后的增量刷新与七端交互待验收 |
 | COM-004 | 本机通过 | 同 Manifest CID 去重，社区 annotation 与签名 Manifest 分层 | 跨源大数据集重建待验收 |
 | COM-005 | 本机通过 | 本地索引支持目标、类别、标签、来源查询；LibraryTrackV1 增加发布者身份 CID，Manifest 导入时记录并参与标题/艺人/专辑/标签/发布者统一全文匹配；Flutter 曲库同步映射 publisher 并纳入列表搜索；服务 1 项 + Flutter 1 项测试 | 大规模数据集的七端性能待验收 |
-| COM-006 | 部分实现 | warn/demote/hide/block/revoke 决策、范围/到期、policy API | 详情与精确打开入口尚未统一应用策略 |
+| COM-006 | 本机通过 | warn/demote/hide/block/revoke 决策、范围/到期、policy API；`/v1/library/tracks` 与 `/v1/search` 统一标注曲目策略（优先 manifest CID、其次发布者）；搜索入口移除 hide/block/revoke 并降权 demote，详情入口长按展示策略并可本地覆盖非强制动作，精确打开门禁 block/revoke 拒绝、warn 确认；API 测试 1 项 + Flutter 9 项 | 七端交互待验收 |
 | COM-007 | 本机通过 | 最高严重度、信任顺序、本地 block 优先与来源解释测试 | UI 冲突矩阵 E2E 待补 |
 | COM-008 | 本机通过 | Catalog/Policy 分别启停、刷新、删除并清理索引/策略；API/UI；离线刷新队列：网络不可用（fetch_failed）时刷新进入持久队列（503 unavailable + retryable 显式告知），网络恢复后下一次刷新自动排空（成功出队、失败累计次数与错误），`GET /v1/community-sources/refresh-queue` 可查，社区页展示排队条目与立即重试；API 测试 1 项 + Flutter 1 项 | 长期离线退避策略与七端交互待验收 |
 | COM-009 | 部分实现 | 内置签名 bootstrap 可独立禁用/永久移除且重启不复现；支持裸 CID、ipfs://、ipns://、jimmusic:// URI 与粘贴式 UI；测试 | 启动源尚未发布远端 Feed 头，缺相机二维码扫描与 IPNS/Kubo 互操作实测 |
