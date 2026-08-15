@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 251 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 253 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，95 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -117,6 +117,9 @@
   错误、崩溃中断重启标记 interrupted（≤64 条滚动），插件页展示；
 - 声明式配置控件（PLG-014/UI-101）：插件配置 Schema 端点（JSON/DAG-CBOR 双编码解析），
   Flutter 按 Schema 渲染开关/枚举/滑杆/文本框（默认值计算），不可解析回退 JSON 编辑；
+- 状态 Schema 迁移（PLG-011）：升级同 schema 完整迁移配置；跨版本从新 Schema 默认值
+  开始（内容寻址 Schema 解析，规则与 Flutter 一致）并封存旧配置（previous_configuration，
+  插件页展示）；schema 降级拒绝（StateSchemaDowngrade）；
 - 关联 ID（NFR-012）：每个 HTTP 请求一个 v1_request span（method/path/request_id），
   Idempotency-Key 提取长度受限且不读取秘密头；
 - 发布自动复刻（NOD-006/DST-010）：auto_replicate_published 开启后发布成功即把各

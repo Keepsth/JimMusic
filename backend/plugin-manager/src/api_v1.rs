@@ -2537,6 +2537,9 @@ async fn install_plugin(
     let request_id = request_id(&headers, request.request_id.as_deref())?;
     let platform = std::env::consts::OS.to_string();
     let architecture = std::env::consts::ARCH.to_string();
+    // PLG-011：跨状态 Schema 升级时从新 Schema 解析默认配置。
+    let configuration_defaults =
+        resolve_configuration_defaults(&state, &request.manifest.configuration_schema_cid).await;
     let install_context = InstallContext {
         request_id,
         platform: platform.clone(),
@@ -2545,6 +2548,7 @@ async fn install_plugin(
         public_key: request.public_key.clone(),
         granted_permissions: request.granted_permissions.clone(),
         allow_community_native: request.allow_community_native,
+        configuration_defaults,
     };
     state
         .lifecycle
@@ -2764,6 +2768,51 @@ fn parse_schema_bytes(bytes: &[u8]) -> Result<serde_json::Value, ApiError> {
     }
     jimmusic_protocol::decode_dag_cbor::<serde_json::Value>(bytes)
         .map_err(|error| ApiError::bad_request("plugin", "parse_schema", error.to_string()))
+}
+
+/// PLG-011：从内容寻址 Schema 解析默认配置（与 Flutter schemaDefaults 同规则）。
+async fn resolve_configuration_defaults(state: &AppState, schema_cid: &str) -> serde_json::Value {
+    let Ok(bytes) = fetch_dag_object(state, schema_cid).await else {
+        return serde_json::json!({});
+    };
+    let Ok(schema) = parse_schema_bytes(&bytes) else {
+        return serde_json::json!({});
+    };
+    schema_defaults(&schema)
+}
+
+/// PLG-011：JSON Schema 子集默认值解析（default → enum 首项 → 类型回退）。
+fn schema_defaults(schema: &serde_json::Value) -> serde_json::Value {
+    let Some(properties) = schema
+        .get("properties")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return serde_json::json!({});
+    };
+    let mut defaults = serde_json::Map::new();
+    for (key, property) in properties {
+        if let Some(value) = property.get("default") {
+            defaults.insert(key.clone(), value.clone());
+            continue;
+        }
+        if let Some(allowed) = property.get("enum").and_then(serde_json::Value::as_array) {
+            if let Some(first) = allowed.first() {
+                defaults.insert(key.clone(), first.clone());
+                continue;
+            }
+        }
+        let value = match property.get("type").and_then(serde_json::Value::as_str) {
+            Some("boolean") => serde_json::json!(false),
+            Some("integer") | Some("number") => property
+                .get("minimum")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!(0)),
+            Some("string") => serde_json::json!(""),
+            _ => serde_json::Value::Null,
+        };
+        defaults.insert(key.clone(), value);
+    }
+    serde_json::Value::Object(defaults)
 }
 
 /// PLG-014/UI-101：返回插件的声明式配置 Schema（JSON Schema），
@@ -4253,6 +4302,7 @@ mod tests {
                     public_key: hex::encode(publisher.verifying_key().to_bytes()),
                     granted_permissions: BTreeSet::from([PluginPermission::AudioDevice]),
                     allow_community_native: true,
+                    configuration_defaults: serde_json::json!({}),
                 },
             )
             .unwrap();
@@ -5322,6 +5372,7 @@ mod tests {
                     public_key: hex::encode(publisher.verifying_key().to_bytes()),
                     granted_permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
                     allow_community_native: true,
+                    configuration_defaults: serde_json::json!({}),
                 },
             )
             .unwrap();
@@ -5338,6 +5389,33 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["properties"]["mode"]["enum"][0], "fast");
         assert_eq!(body["properties"]["gain"]["maximum"], 12);
+    }
+
+    #[test]
+    fn schema_defaults_mirror_flutter_rules() {
+        // default → enum 首项 → 类型回退（minimum/boolean/string）。
+        let defaults = schema_defaults(&serde_json::json!({
+            "properties": {
+                "mode": {"type": "string", "enum": ["standard", "vinyl"], "default": "vinyl"},
+                "gain": {"type": "number", "minimum": -24.0},
+                "oversample": {"type": "boolean"},
+                "label": {"type": "string"},
+            }
+        }));
+        assert_eq!(
+            defaults,
+            serde_json::json!({
+                "mode": "vinyl",
+                "gain": -24.0,
+                "oversample": false,
+                "label": ""
+            })
+        );
+        // 无 properties → 空对象。
+        assert_eq!(
+            schema_defaults(&serde_json::json!({"type": "object"})),
+            serde_json::json!({})
+        );
     }
 
     #[tokio::test]

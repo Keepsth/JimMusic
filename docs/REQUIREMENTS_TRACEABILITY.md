@@ -66,7 +66,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-008 | 本机通过 | service owner 注册冲突与微内核保留服务拒绝测试 | 尚无跨进程 service host |
 | PLG-009 | 本机通过 | revoked manifest 在 preflight 被拒绝，可停用/隔离；社区 Policy Revoke 事件在摄取与刷新后自动应用：`active_revoke_targets` 收集生效（未过期、来源启用）目标，`revoke_release` 按 manifest CID 匹配已安装版本并置 Revoked + 推送 `plugin.state_changed`，幂等；API 测试 | 撤销 Feed 快照防回滚与七端交互待验收 |
 | PLG-010 | 本机通过 | 连续失败、quarantine/safe mode；Wasmtime fuel、内存/表限制和 trap 测试 | 社区原生插件仍需独立进程超时探针 |
-| PLG-011 | 部分实现 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON；声明式控件；敏感字段（`sensitive: true`）遮罩显示并标注（敏感）；1 项测试 | 完整状态 Schema 迁移策略未实现 |
+| PLG-011 | 本机通过 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON；声明式控件；敏感字段遮罩显示；状态 Schema 迁移策略：升级同 schema 完整迁移配置、跨版本从新 Schema 默认值开始并封存旧配置（previous_configuration，UI 展示）、schema 降级拒绝（StateSchemaDowngrade）；生命周期测试 1 项 + API 测试 1 项 | 七端交互待验收 |
 | PLG-012 | 本机通过 | platform/arch/core ABI/依赖/冲突/权限在下载前 preflight | 七端目录数据待实际验证 |
 | PLG-013 | 本机通过 | lifecycle state、错误、版本、信任、权限可观测；安装日志持久化中间态（downloading/verifying/staging/committing），失败保留结构化错误、崩溃中断重启标记 interrupted（≤64 条滚动），`GET /v1/plugins/install-journal` 与插件页展示；生命周期测试 2 项 | 七端交互与日志展示待验收 |
 | PLG-014 | 本机通过 | 配置 UI 只使用 Host Flutter 组件且不注入路由/脚本；`GET /v1/plugins/{id}/schema` 从内容寻址仓库解析 Schema（JSON 或 DAG-CBOR 双编码，并修复 set_config 的同一潜在不一致）；Flutter 按 Schema 渲染开关/枚举下拉/数值滑杆/文本框（默认值计算），Schema 不可解析时回退 JSON 编辑；API 测试 1 项 + Flutter 测试 3 项 | 仪表/预设控件与七端交互待验收 |

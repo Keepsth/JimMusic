@@ -55,10 +55,21 @@ pub struct PluginRuntimeRecord {
     pub configuration: serde_json::Value,
     pub configuration_schema_cid: String,
     pub state_schema_version: u16,
+    /// PLG-011：升级跨越 state_schema_version 时保留的旧配置（审计/回滚参考）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_configuration: Option<PreviousConfiguration>,
     pub versions: BTreeMap<String, InstalledPluginVersion>,
     pub consecutive_failures: u32,
     pub last_error: Option<String>,
     pub updated_at: i64,
+}
+
+/// PLG-011：跨状态 Schema 版本升级时，旧配置按其原 schema 版本封存，
+/// 供审计、回滚与人工迁移参考；新版本从新 Schema 默认值开始。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PreviousConfiguration {
+    pub state_schema_version: u16,
+    pub configuration: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -108,6 +119,9 @@ pub struct InstallContext {
     pub public_key: String,
     pub granted_permissions: BTreeSet<PluginPermission>,
     pub allow_community_native: bool,
+    /// PLG-011：新状态 Schema 的默认配置（由调用方从 configuration_schema_cid
+    /// 解析）；仅当升级跨越 state_schema_version 时使用。
+    pub configuration_defaults: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]
@@ -170,6 +184,8 @@ pub enum PluginLifecycleError {
     NoRollback,
     #[error("configuration must be a JSON object")]
     InvalidConfiguration,
+    #[error("state_schema_version downgrade from {from} to {to} is not allowed")]
+    StateSchemaDowngrade { from: u16, to: u16 },
     #[error("plugins cannot replace trusted microkernel service `{0}`")]
     TrustedService(String),
     #[error("service `{0}` is already registered by another plugin")]
@@ -503,6 +519,21 @@ impl PluginLifecycleService {
         context: InstallContext,
     ) -> Result<PluginInstallOutcome, PluginLifecycleError> {
         let (artifact, trust_channel) = self.preflight(&manifest, &context)?;
+        // PLG-011：状态 Schema 降级拒绝——与存储层拒绝未来 schema 的策略一致。
+        if let Some(existing) = self
+            .store
+            .snapshot()
+            .plugins
+            .get(&manifest.plugin_id)
+            .cloned()
+        {
+            if existing.state_schema_version > manifest.state_schema_version {
+                return Err(PluginLifecycleError::StateSchemaDowngrade {
+                    from: existing.state_schema_version,
+                    to: manifest.state_schema_version,
+                });
+            }
+        }
         let manifest_cid = jimmusic_protocol::cid_v1_for(&manifest)
             .map_err(|error| PluginLifecycleError::InvalidManifest(error.to_string()))?;
         if artifact.byte_length != artifact_bytes.len() as u64 {
@@ -576,6 +607,20 @@ impl PluginLifecycleService {
                     record.active_version.clone()
                 }
             });
+            // PLG-011：状态 Schema 迁移策略——
+            // 同版本完整迁移配置；跨版本封存旧配置并从新 Schema 默认值开始。
+            let previous_configuration = existing
+                .as_ref()
+                .filter(|record| record.state_schema_version != manifest.state_schema_version)
+                .map(|record| PreviousConfiguration {
+                    state_schema_version: record.state_schema_version,
+                    configuration: record.configuration.clone(),
+                });
+            let configuration = match (&existing, &previous_configuration) {
+                (Some(record), None) => record.configuration.clone(),
+                (_, Some(_)) => context.configuration_defaults.clone(),
+                (None, None) => serde_json::json!({}),
+            };
             let record = PluginRuntimeRecord {
                 plugin_id: manifest.plugin_id.clone(),
                 name: manifest.name.clone(),
@@ -590,9 +635,10 @@ impl PluginLifecycleService {
                 permissions_granted: context.granted_permissions.clone(),
                 dependencies: manifest.dependencies.clone(),
                 conflicts: manifest.conflicts.iter().cloned().collect(),
-                configuration: serde_json::json!({}),
+                configuration,
                 configuration_schema_cid: manifest.configuration_schema_cid.clone(),
                 state_schema_version: manifest.state_schema_version,
+                previous_configuration,
                 versions,
                 consecutive_failures: 0,
                 last_error: None,
@@ -1051,6 +1097,134 @@ mod tests {
     use ed25519_dalek::{Signer, SigningKey};
     use jimmusic_protocol::cid_v1_for;
 
+    #[test]
+    fn state_schema_migration_preserves_config_migrates_on_bump_and_rejects_downgrade() {
+        use jimmusic_protocol::cid_v1_for_bytes;
+
+        let dir = tempfile::tempdir().unwrap();
+        let service = PluginLifecycleService::open(dir.path()).unwrap();
+        service
+            .add_official_publisher("org.example".into())
+            .unwrap();
+        let key = SigningKey::from_bytes(&[41; 32]);
+        let artifact = b"migration-artifact".to_vec();
+
+        let build = |version: &str, state_schema_version: u16| {
+            let mut manifest = PluginManifestV1 {
+                schema_version: SCHEMA_V1,
+                plugin_id: "org.example.migrate".into(),
+                name: "Migrate".into(),
+                version: version.into(),
+                publisher: "org.example".into(),
+                plugin_kind: "audio_processor".into(),
+                interface_versions: BTreeMap::from([("audio_processor".into(), "2".into())]),
+                minimum_core_version: "2.0.0".into(),
+                maximum_core_version: "2.9.9".into(),
+                artifacts: vec![PluginArtifactV1 {
+                    artifact_cid: cid_v1_for_bytes(RAW_CODEC, &artifact),
+                    platform: "linux".into(),
+                    architecture: "x86_64".into(),
+                    runtime: PluginRuntime::Native,
+                    entrypoint: "libmigrate.so".into(),
+                    byte_length: artifact.len() as u64,
+                    sha256: sha256_hex(&artifact),
+                    provenance_cid: None,
+                    sbom_cid: Some("bafysbom".into()),
+                    sandbox_profile: "official-native".into(),
+                    required_host_capabilities: vec!["audio_realtime".into()],
+                    hardware_requirements: Vec::new(),
+                }],
+                capabilities: vec!["audio_processor".into()],
+                permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
+                dependencies: Vec::new(),
+                conflicts: Vec::new(),
+                configuration_schema_cid: "bafyschema".into(),
+                state_schema_version,
+                license: "GPL-3.0-only".into(),
+                release_notes_cid: None,
+                previous_release_cid: None,
+                signature: None,
+                revoked_at: None,
+            };
+            manifest.signature = Some(hex::encode(
+                key.sign(&manifest.unsigned_bytes().unwrap()).to_bytes(),
+            ));
+            manifest
+        };
+
+        let ctx = |request_id: &str, defaults: serde_json::Value| InstallContext {
+            request_id: request_id.into(),
+            platform: "linux".into(),
+            architecture: "x86_64".into(),
+            core_version: "2.0.0".into(),
+            public_key: hex::encode(key.verifying_key().to_bytes()),
+            granted_permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
+            allow_community_native: false,
+            configuration_defaults: defaults,
+        };
+
+        // 安装 v1（schema 1）并配置。
+        service
+            .install(
+                build("1.0.0", 1),
+                &artifact,
+                ctx("migrate-1", serde_json::json!({})),
+            )
+            .unwrap();
+        service
+            .configure("org.example.migrate", serde_json::json!({"gain": 5.0}))
+            .unwrap();
+
+        // 同 schema 升级 v1.1 → 配置完整迁移。
+        service
+            .install(
+                build("1.1.0", 1),
+                &artifact,
+                ctx("migrate-2", serde_json::json!({})),
+            )
+            .unwrap();
+        let record = service.get("org.example.migrate").unwrap();
+        assert_eq!(record.configuration, serde_json::json!({"gain": 5.0}));
+        assert!(record.previous_configuration.is_none());
+
+        // 跨 schema 升级 v2（schema 2）→ 新 Schema 默认值 + 旧配置封存。
+        service
+            .install(
+                build("2.0.0", 2),
+                &artifact,
+                ctx(
+                    "migrate-3",
+                    serde_json::json!({"gain": 1.0, "mode": "standard"}),
+                ),
+            )
+            .unwrap();
+        let record = service.get("org.example.migrate").unwrap();
+        assert_eq!(record.state_schema_version, 2);
+        assert_eq!(
+            record.configuration,
+            serde_json::json!({"gain": 1.0, "mode": "standard"})
+        );
+        let previous = record.previous_configuration.expect("schema bumped");
+        assert_eq!(previous.state_schema_version, 1);
+        assert_eq!(previous.configuration, serde_json::json!({"gain": 5.0}));
+
+        // 状态 Schema 降级被拒绝。
+        let error = service
+            .install(
+                build("1.2.0", 1),
+                &artifact,
+                ctx("migrate-4", serde_json::json!({})),
+            )
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                PluginLifecycleError::StateSchemaDowngrade { from: 2, to: 1 }
+            ),
+            "{error}"
+        );
+    }
+
     fn signed_manifest(key: &SigningKey, bytes: &[u8], version: &str) -> PluginManifestV1 {
         let mut manifest = PluginManifestV1 {
             schema_version: SCHEMA_V1,
@@ -1103,6 +1277,7 @@ mod tests {
             public_key: hex::encode(key.verifying_key().to_bytes()),
             granted_permissions: BTreeSet::from([PluginPermission::AudioDevice]),
             allow_community_native: false,
+            configuration_defaults: serde_json::json!({}),
         }
     }
 

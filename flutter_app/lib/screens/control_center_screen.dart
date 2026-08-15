@@ -2031,6 +2031,17 @@ class _PluginsTab extends StatelessWidget {
                       if (plugin['trust_channel'] ==
                           'community_native_advanced')
                         const CommunityNativeWarningTile(),
+                      // PLG-011：跨状态 Schema 升级后旧配置已封存。
+                      if (plugin['previous_configuration'] != null)
+                        ListTile(
+                          leading: const Icon(Icons.swap_horiz_outlined),
+                          title: const Text('配置已按新 Schema 迁移'),
+                          subtitle: Text(
+                            '旧配置（schema v'
+                            '${plugin['previous_configuration']['state_schema_version']}）已封存，'
+                            '回滚后可查看。',
+                          ),
+                        ),
                       ListTile(
                         title: const Text('权限'),
                         subtitle: Text(
