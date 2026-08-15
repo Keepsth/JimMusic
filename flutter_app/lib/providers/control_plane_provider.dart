@@ -456,6 +456,35 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> uninstallPlugin(String id) =>
       _mutate((api) => api.delete('/plugins/${Uri.encodeComponent(id)}'));
 
+  Future<Map<String, dynamic>?> pluginConfig(String id) async {
+    final api = _makeApi();
+    try {
+      return _map(
+        await api.get('/plugins/${Uri.encodeComponent(id)}/config'),
+      );
+    } catch (error) {
+      _error = error.toString();
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
+
+  /// PLG-014/UI-101：插件的声明式配置 Schema。
+  Future<Map<String, dynamic>?> pluginConfigSchema(String id) async {
+    final api = _makeApi();
+    try {
+      return _map(
+        await api.get('/plugins/${Uri.encodeComponent(id)}/schema'),
+      );
+    } catch (_) {
+      return null;
+    } finally {
+      api.close();
+    }
+  }
+
   Future<void> configurePlugin(String id, Map<String, dynamic> configuration) =>
       _mutate(
         (api) => api.put(

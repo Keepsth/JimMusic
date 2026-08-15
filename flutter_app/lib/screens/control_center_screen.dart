@@ -8,6 +8,7 @@ import '../providers/audio_output_provider.dart';
 import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../services/control_api_types.dart' show networkPauseHint;
+import '../widgets/plugin_config_form.dart';
 
 class ControlCenterScreen extends StatelessWidget {
   const ControlCenterScreen({super.key});
@@ -1942,7 +1943,16 @@ class _PluginsTab extends StatelessWidget {
         '  ',
       ).convert(plugin['configuration'] ?? <String, dynamic>{}),
     );
+    // PLG-014/UI-101：Schema 可解析时按声明式控件渲染，否则回退 JSON 编辑。
+    final schema = await control.pluginConfigSchema(id);
+    final current = await control.pluginConfig(id);
+    final rawConfiguration = current?['configuration'];
+    final initialConfiguration = rawConfiguration is Map<String, dynamic>
+        ? rawConfiguration
+        : <String, dynamic>{};
+    if (!context.mounted) return;
     String? validationError;
+    Map<String, dynamic>? schemaValues;
     final accepted = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -1950,28 +1960,37 @@ class _PluginsTab extends StatelessWidget {
           title: Text('配置 ${plugin['name'] ?? id}'),
           content: SizedBox(
             width: 600,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Schema CID：${plugin['configuration_schema_cid']}'),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: configuration,
-                  minLines: 8,
-                  maxLines: 16,
-                  decoration: const InputDecoration(
-                    labelText: '声明式配置 JSON',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                if (validationError != null)
-                  Text(
-                    validationError!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Schema CID：${plugin['configuration_schema_cid']}'),
+                  const SizedBox(height: 8),
+                  if (schema != null)
+                    PluginConfigForm(
+                      schema: schema,
+                      initial: initialConfiguration,
+                      onChanged: (values) => schemaValues = values,
+                    )
+                  else
+                    TextField(
+                      controller: configuration,
+                      minLines: 8,
+                      maxLines: 16,
+                      decoration: const InputDecoration(
+                        labelText: '声明式配置 JSON（Schema 不可解析）',
+                        border: OutlineInputBorder(),
+                      ),
                     ),
-                  ),
-              ],
+                  if (validationError != null)
+                    Text(
+                      validationError!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           actions: [
@@ -1981,11 +2000,15 @@ class _PluginsTab extends StatelessWidget {
             ),
             FilledButton(
               onPressed: () {
-                try {
-                  jsonDecode(configuration.text) as Map<String, dynamic>;
+                if (schema == null) {
+                  try {
+                    jsonDecode(configuration.text) as Map<String, dynamic>;
+                    Navigator.pop(dialogContext, true);
+                  } catch (error) {
+                    setState(() => validationError = '配置 JSON 无效：$error');
+                  }
+                } else {
                   Navigator.pop(dialogContext, true);
-                } catch (error) {
-                  setState(() => validationError = '配置 JSON 无效：$error');
                 }
               },
               child: const Text('验证并保存'),
@@ -1995,10 +2018,10 @@ class _PluginsTab extends StatelessWidget {
       ),
     );
     if (accepted == true) {
-      await control.configurePlugin(
-        id,
-        jsonDecode(configuration.text) as Map<String, dynamic>,
-      );
+      final values = schema == null
+          ? jsonDecode(configuration.text) as Map<String, dynamic>
+          : (schemaValues ?? initialConfiguration);
+      await control.configurePlugin(id, values);
     }
   }
 }

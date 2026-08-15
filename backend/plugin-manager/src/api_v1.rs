@@ -112,6 +112,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/plugins/{id}/config",
             get(get_plugin_config).put(set_plugin_config),
         )
+        .route("/plugins/{id}/schema", get(get_plugin_schema))
         .route(
             "/plugins/{id}/permissions/{permission}",
             delete(revoke_permission),
@@ -2562,6 +2563,32 @@ async fn get_plugin_config(
     })))
 }
 
+/// 读取插件配置 Schema：CAS 中的对象可能是 JSON 字节或 DAG-CBOR 字节，
+/// 两种编码都支持（PLG-014）。
+fn parse_schema_bytes(bytes: &[u8]) -> Result<serde_json::Value, ApiError> {
+    if let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) {
+        return Ok(value);
+    }
+    jimmusic_protocol::decode_dag_cbor::<serde_json::Value>(bytes)
+        .map_err(|error| ApiError::bad_request("plugin", "parse_schema", error.to_string()))
+}
+
+/// PLG-014/UI-101：返回插件的声明式配置 Schema（JSON Schema），
+/// 供客户端渲染滑块/枚举/开关等 Host 组件（不注入任意 UI 代码）。
+async fn get_plugin_schema(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let plugin = state
+        .lifecycle
+        .get(&id)
+        .ok_or_else(|| ApiError::not_found("plugin", "schema", &id))?;
+    let bytes = fetch_dag_object(&state, &plugin.configuration_schema_cid)
+        .await
+        .map_err(|_| ApiError::not_found("plugin", "schema", "schema object not retrievable"))?;
+    Ok(Json(parse_schema_bytes(&bytes)?))
+}
+
 async fn set_plugin_config(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
@@ -2575,8 +2602,7 @@ async fn set_plugin_config(
         .node
         .cat(&plugin.configuration_schema_cid)
         .map_err(|error| ApiError::bad_request("plugin", "load_configuration_schema", error))?;
-    let schema: serde_json::Value = serde_json::from_slice(&schema_bytes)
-        .map_err(|error| ApiError::bad_request("plugin", "parse_configuration_schema", error))?;
+    let schema = parse_schema_bytes(&schema_bytes)?;
     validate_schema_value(&schema, &configuration, "$")
         .map_err(|error| ApiError::bad_request("plugin", "validate_configuration", error))?;
     let record = state
@@ -4667,6 +4693,103 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert!(queue.as_array().unwrap().is_empty(), "{queue}");
+    }
+
+    #[tokio::test]
+    async fn plugin_config_schema_is_served_from_content_addressed_store() {
+        use app_core::node_service::RAW_CODEC;
+        use jimmusic_protocol::{
+            canonical_dag_cbor, cid_v1_for_bytes, PluginArtifactV1, PluginRuntime,
+        };
+        use std::collections::BTreeSet;
+
+        let (state, _dir) = state();
+        // 配置 Schema 存入本地 CAS（内容寻址）。
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "gain": {"type": "number", "minimum": -12, "maximum": 12, "default": 0},
+                "enabled": {"type": "boolean", "default": true},
+                "mode": {"type": "string", "enum": ["fast", "quality"], "default": "fast"},
+            }
+        });
+        let schema_cid = state
+            .node
+            .add_dag_cbor(&canonical_dag_cbor(&schema).unwrap(), false)
+            .unwrap();
+
+        let artifact = b"schema-test-artifact".to_vec();
+        let publisher = SigningKey::from_bytes(&[32; 32]);
+        let mut manifest = PluginManifestV1 {
+            schema_version: SCHEMA_V1,
+            plugin_id: "org.example.schema".into(),
+            name: "Schema".into(),
+            version: "1.0.0".into(),
+            publisher: "org.example".into(),
+            plugin_kind: "audio_processor".into(),
+            interface_versions: BTreeMap::from([("audio_processor".into(), "2".into())]),
+            minimum_core_version: "2.0.0".into(),
+            maximum_core_version: "2.9.9".into(),
+            artifacts: vec![PluginArtifactV1 {
+                artifact_cid: cid_v1_for_bytes(RAW_CODEC, &artifact),
+                platform: "linux".into(),
+                architecture: "x86_64".into(),
+                runtime: PluginRuntime::Native,
+                entrypoint: "libschema.so".into(),
+                byte_length: artifact.len() as u64,
+                sha256: crate::state::sha256_hex(&artifact),
+                provenance_cid: None,
+                sbom_cid: Some("bafysbom".into()),
+                sandbox_profile: "official-native".into(),
+                required_host_capabilities: vec!["audio_realtime".into()],
+                hardware_requirements: Vec::new(),
+            }],
+            capabilities: vec!["audio_processor".into()],
+            permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
+            dependencies: Vec::new(),
+            conflicts: Vec::new(),
+            configuration_schema_cid: schema_cid.clone(),
+            state_schema_version: 1,
+            license: "GPL-3.0-only".into(),
+            release_notes_cid: None,
+            previous_release_cid: None,
+            signature: None,
+            revoked_at: None,
+        };
+        manifest.signature = Some(hex::encode(
+            publisher
+                .sign(&manifest.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        let outcome = state
+            .lifecycle
+            .install(
+                manifest,
+                &artifact,
+                InstallContext {
+                    request_id: "schema-install".into(),
+                    platform: "linux".into(),
+                    architecture: "x86_64".into(),
+                    core_version: "2.0.0".into(),
+                    public_key: hex::encode(publisher.verifying_key().to_bytes()),
+                    granted_permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
+                    allow_community_native: true,
+                },
+            )
+            .unwrap();
+        assert!(!outcome.idempotent_replay);
+
+        let (status, body) = call(
+            routes(),
+            state,
+            "GET",
+            "/plugins/org.example.schema/schema",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["properties"]["mode"]["enum"][0], "fast");
+        assert_eq!(body["properties"]["gain"]["maximum"], 12);
     }
 
     #[tokio::test]
