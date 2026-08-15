@@ -72,6 +72,9 @@ pub struct LibraryTrackV1 {
     pub album: String,
     pub duration_ms: Option<u64>,
     pub tags: Vec<String>,
+    /// 发布者身份 CID（Manifest 导入时记录，参与统一全文索引，COM-005）。
+    #[serde(default)]
+    pub publisher: Option<String>,
     pub sources: Vec<TrackSourceV1>,
     pub selected_source_id: Option<String>,
     pub scan_state: ScanState,
@@ -214,6 +217,7 @@ impl LibraryService {
                 .duration
                 .map(|seconds| (seconds.max(0.0) * 1000.0) as u64),
             tags: Vec::new(),
+            publisher: None,
             sources: vec![source],
             selected_source_id: Some(source_id),
             scan_state: if available {
@@ -264,6 +268,7 @@ impl LibraryService {
             album: manifest.album.clone(),
             duration_ms: Some(manifest.duration_ms),
             tags: manifest.tags.clone(),
+            publisher: Some(manifest.publisher_identity_cid.clone()),
             sources,
             selected_source_id,
             scan_state: ScanState::Indexed,
@@ -305,6 +310,10 @@ impl LibraryService {
                         .artists
                         .iter()
                         .any(|artist| artist.to_lowercase().contains(&query))
+                    || track
+                        .publisher
+                        .as_deref()
+                        .is_some_and(|publisher| publisher.to_lowercase().contains(&query))
                     || track
                         .tags
                         .iter()
@@ -650,6 +659,25 @@ mod tests {
             updated_at: 1,
             publisher_signature: Some("signature".into()),
         }
+    }
+
+    #[test]
+    fn publisher_identity_cid_is_indexed_and_searchable() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = LibraryService::open(dir.path().join("library.json")).unwrap();
+        service
+            .import_manifest("bafymanifest".into(), &manifest(), 1)
+            .unwrap();
+        // 发布者身份 CID 参与统一全文索引（COM-005）。
+        let by_publisher = service.search("bafyidentity");
+        assert_eq!(by_publisher.len(), 1);
+        assert_eq!(by_publisher[0].title, "Remote");
+        assert_eq!(by_publisher[0].publisher.as_deref(), Some("bafyidentity"));
+        // 标题/专辑/艺人/标签照常命中。
+        assert_eq!(service.search("ambient").len(), 1);
+        assert_eq!(service.search("Artist").len(), 1);
+        // 未命中的查询为空。
+        assert!(service.search("bafynothing").is_empty());
     }
 
     #[test]

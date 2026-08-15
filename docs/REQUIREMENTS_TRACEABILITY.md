@@ -113,7 +113,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | COM-002 | 本机通过 | 双 Feed 序列/previous CID/时间/签名/到期校验；负向测试 | 大型远端 Feed 跨版本回放待验收 |
 | COM-003 | 本机通过 | 已启用 Catalog 与本地索引可合并搜索，精确 CID API 存在；直接关注发布者：`POST/GET/DELETE /v1/community-sources/follows` 持久化关注（上限 4096），关注后把目录中该发布者的 Music Manifest 解析（本地 CAS/P2P、签名校验、单次 ≤128）导入媒体库，禁用/删除全部 Catalog 后仍可搜索播放（关注记录与曲库保留，取消关注不删用户数据）；社区页新增关注发布者 UI；API 测试 1 项 + Flutter 测试 1 项 | 关注后的增量刷新与七端交互待验收 |
 | COM-004 | 本机通过 | 同 Manifest CID 去重，社区 annotation 与签名 Manifest 分层 | 跨源大数据集重建待验收 |
-| COM-005 | 部分实现 | 本地索引支持目标、类别、标签、来源查询 | 标题/艺人/专辑/发布者的统一全文索引不完整 |
+| COM-005 | 本机通过 | 本地索引支持目标、类别、标签、来源查询；LibraryTrackV1 增加发布者身份 CID，Manifest 导入时记录并参与标题/艺人/专辑/标签/发布者统一全文匹配；Flutter 曲库同步映射 publisher 并纳入列表搜索；服务 1 项 + Flutter 1 项测试 | 大规模数据集的七端性能待验收 |
 | COM-006 | 部分实现 | warn/demote/hide/block/revoke 决策、范围/到期、policy API | 详情与精确打开入口尚未统一应用策略 |
 | COM-007 | 本机通过 | 最高严重度、信任顺序、本地 block 优先与来源解释测试 | UI 冲突矩阵 E2E 待补 |
 | COM-008 | 本机通过 | Catalog/Policy 分别启停、刷新、删除并清理索引/策略；API/UI | 离线刷新队列未实现 |

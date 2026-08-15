@@ -88,6 +88,7 @@ Music? musicFromLibraryTrack(Map<String, dynamic> track) {
     manifestCid: track['manifest_cid'] as String?,
     renditionCid: primary?['content_cid'] as String?,
     codec: primary?['codec'] as String?,
+    publisher: track['publisher'] as String?,
     sampleRate: (primary?['sample_rate'] as num?)?.toInt(),
     bitDepth: (primary?['bit_depth'] as num?)?.toInt(),
     channels: (primary?['channels'] as num?)?.toInt(),

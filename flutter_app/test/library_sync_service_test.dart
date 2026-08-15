@@ -101,6 +101,27 @@ void main() {
       expect(music.isFavorite, isTrue);
     });
 
+    test('发布者身份 CID 随曲目映射（COM-005）', () {
+      final music = musicFromLibraryTrack({
+        'track_id': 'jm_pub',
+        'title': 'T',
+        'artists': const [],
+        'album': '',
+        'publisher': 'bafypublisher',
+        'sources': [
+          {
+            'kind': 'ipfs',
+            'uri': 'ipfs://x',
+            'content_cid': 'bafyr',
+            'container': 'flac',
+            'codec': 'flac',
+            'availability': 'offline',
+          },
+        ],
+      })!;
+      expect(music.publisher, 'bafypublisher');
+    });
+
     test('本地文件源保留路径且可用', () {
       final music = musicFromLibraryTrack({
         'track_id': 'jm_local',

@@ -22,6 +22,9 @@ class Music {
   final int? sampleRate;
   final int? bitDepth;
   final int? channels;
+
+  /// 发布者身份 CID（Manifest/社区曲目，COM-005 全文索引）。
+  final String? publisher;
   final List<String> communitySourceIds;
 
   /// 内存中的音频数据（Web 端导入时无文件路径，直接持有字节供播放）。
@@ -53,6 +56,7 @@ class Music {
     this.sampleRate,
     this.bitDepth,
     this.channels,
+    this.publisher,
     this.communitySourceIds = const [],
     this.audioBytes,
     this.mimeType,
@@ -78,6 +82,7 @@ class Music {
     int? sampleRate,
     int? bitDepth,
     int? channels,
+    String? publisher,
     List<String>? communitySourceIds,
     Uint8List? audioBytes,
     String? mimeType,
@@ -101,6 +106,7 @@ class Music {
       sampleRate: sampleRate ?? this.sampleRate,
       bitDepth: bitDepth ?? this.bitDepth,
       channels: channels ?? this.channels,
+      publisher: publisher ?? this.publisher,
       communitySourceIds: communitySourceIds ?? this.communitySourceIds,
       audioBytes: audioBytes ?? this.audioBytes,
       mimeType: mimeType ?? this.mimeType,

@@ -154,7 +154,8 @@ class MusicPlayerProvider extends ChangeNotifier {
     return _library.where((m) {
       return m.title.toLowerCase().contains(q) ||
           m.artist.toLowerCase().contains(q) ||
-          m.album.toLowerCase().contains(q);
+          m.album.toLowerCase().contains(q) ||
+          (m.publisher?.toLowerCase().contains(q) ?? false);
     }).toList();
   }
 
