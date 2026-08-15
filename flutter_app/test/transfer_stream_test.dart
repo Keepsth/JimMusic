@@ -28,10 +28,7 @@ void main() {
 
   group('transferStreamUri', () {
     test('把端点与任务 ID 拼为流端点 URI', () {
-      final uri = transferStreamUri(
-        'http://127.0.0.1:8787/v1',
-        'tr_abc123',
-      );
+      final uri = transferStreamUri('http://127.0.0.1:8787/v1', 'tr_abc123');
       expect(
         uri.toString(),
         'http://127.0.0.1:8787/v1/transfers/tr_abc123/stream',
@@ -48,9 +45,7 @@ void main() {
 
   group('MusicPlayerProvider.playTransferStream', () {
     setUp(() {
-      JustAudioPlatform.instance = FakeJustAudioPlatform(
-        FakePlayerPlatform(),
-      );
+      JustAudioPlatform.instance = FakeJustAudioPlatform(FakePlayerPlatform());
     });
 
     test('经传输流端点成功挂载音源并注入鉴权头', () async {
@@ -77,7 +72,10 @@ void main() {
       expect(provider.currentMusic?.id, 'transfer-tr_live');
       expect(provider.playerState, PlayerState.buffering);
       expect(provider.playbackError, isNull);
-      expect(received, contains('/v1/transfers/tr_live/stream auth=Bearer tok'));
+      expect(
+        received,
+        contains('/v1/transfers/tr_live/stream auth=Bearer tok'),
+      );
       provider.dispose();
     });
 
@@ -121,12 +119,7 @@ void main() {
         endpoint: 'http://127.0.0.1:${server.port}/v1',
         token: 'tok',
       );
-      expect(
-        received,
-        containsAll([
-          'GET /v1/transfers/tr_play/stream',
-        ]),
-      );
+      expect(received, containsAll(['GET /v1/transfers/tr_play/stream']));
       expect(
         received.firstWhere((entry) => entry.startsWith('POST /v1/transfers')),
         contains('bafytest'),
@@ -154,6 +147,47 @@ void main() {
         mimeType: 'audio/mpeg',
       );
       expect(provider.currentMusic?.id, 'transfer-tr_dead');
+      await _pumpUntil(() => provider.playbackError != null);
+      expect(provider.playerState, PlayerState.stopped);
+      expect(provider.playbackError, isNotNull);
+      provider.dispose();
+    });
+
+    test('网络中断（流中途断开）给出结构化播放失败（PLR-008）', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        if (request.method == 'POST' && request.uri.path == '/v1/transfers') {
+          request.response.statusCode = 200;
+          request.response.write('{"task_id":"tr_cut"}');
+          request.response.close();
+        } else if (request.uri.path == '/v1/transfers/tr_cut/stream') {
+          // 模拟网络中断：先发出部分响应体，再销毁底层 socket。
+          final socket = await request.response.detachSocket();
+          socket.write(
+            'HTTP/1.1 200 OK\r\n'
+            'Content-Type: audio/mpeg\r\n'
+            'Transfer-Encoding: chunked\r\n'
+            '\r\n'
+            '3\r\nabc\r\n',
+          );
+          await socket.flush();
+          socket.destroy();
+        } else {
+          request.response.statusCode = 404;
+          request.response.close();
+        }
+      });
+      addTearDown(() => server.close(force: true));
+
+      final provider = MusicPlayerProvider();
+      await provider.ready;
+      await provider.playTransferStream(
+        taskId: 'tr_cut',
+        endpoint: 'http://127.0.0.1:${server.port}/v1',
+        token: '',
+        mimeType: 'audio/mpeg',
+      );
+      expect(provider.currentMusic?.id, 'transfer-tr_cut');
       await _pumpUntil(() => provider.playbackError != null);
       expect(provider.playerState, PlayerState.stopped);
       expect(provider.playbackError, isNotNull);

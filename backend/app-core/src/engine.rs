@@ -997,6 +997,30 @@ mod tests {
         }
     }
 
+    /// 写入阶段持续失败的输出（设备热拔插/丢失场景）。
+    struct FailingWriteSink;
+
+    impl PcmSink for FailingWriteSink {
+        fn write(&self, _samples: &[i16], _frames: u32) -> Result<u32, OutputError> {
+            Err(OutputError::Operation(-5))
+        }
+        fn play(&self) -> Result<(), OutputError> {
+            Ok(())
+        }
+        fn pause(&self) -> Result<(), OutputError> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), OutputError> {
+            Ok(())
+        }
+        fn flush(&self) -> Result<(), OutputError> {
+            Ok(())
+        }
+        fn buffered_frames(&self) -> u32 {
+            0
+        }
+    }
+
     impl PcmSink for FailingStartSink {
         fn write(&self, _samples: &[i16], _frames: u32) -> Result<u32, OutputError> {
             Ok(0)
@@ -1222,6 +1246,73 @@ mod tests {
         wait_completed(&mut rx).await;
         assert_eq!(engine.state().await, EngineState::Stopped);
         assert_eq!(sink.total_written.load(Ordering::SeqCst), 4096);
+    }
+
+    async fn wait_playback_failed(rx: &mut broadcast::Receiver<Event>) -> PlaybackFailure {
+        loop {
+            let event = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("timed out waiting for PlaybackFailed")
+                .expect("channel closed");
+            if let Event::PlaybackFailed { error, .. } = event {
+                return error;
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn playback_failure_matrix_distinguishes_device_loss_and_corruption() {
+        // 1) 设备热拔插/丢失：写入阶段失败 → device_write_failed，可重试。
+        let (engine, mut rx) = engine_with_bus();
+        engine.set_output(Arc::new(FailingWriteSink)).await;
+        engine
+            .play_pcm("device-loss".into(), 44_100, 1, vec![0; 64], 1.0)
+            .await;
+        let error = wait_playback_failed(&mut rx).await;
+        assert_eq!(error.source, "audio_output");
+        assert_eq!(error.stage, "write");
+        assert_eq!(error.code, "device_write_failed");
+        assert!(error.retryable, "device loss must be retryable");
+        assert!(!error.suggestion.is_empty());
+
+        // 2) 文件损坏/解码失败：结构化解码错误（元数据阶段或流内解码阶段），
+        //    不可自动重试。
+        let dir = tempfile::tempdir().unwrap();
+        let broken = dir.path().join("broken.wav");
+        write_constant_wav(&broken, 0, 1000);
+        // 数据区声明 1000 帧，实际截断到一半：头部可解析，解码中途失败。
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&broken)
+            .unwrap();
+        file.set_len(44 + 1000).unwrap();
+        drop(file);
+        let (engine, mut rx) = engine_with_bus();
+        engine.set_output(Arc::new(RecordingSink::default())).await;
+        let started = engine
+            .play_file("corrupt".into(), broken.to_string_lossy().into_owned())
+            .await;
+        if let Err(OutputError::Decode(_)) = started {
+            // 元数据阶段即识别损坏。
+        } else {
+            let error = wait_playback_failed(&mut rx).await;
+            assert_eq!(error.stage, "decode");
+            assert_eq!(error.code, "decode_failed");
+            assert!(!error.retryable, "corrupt files must not auto-retry");
+            assert!(error.suggestion.contains("decoder"));
+        }
+
+        // 3) 打开阶段失败 → device_start_failed（换输出设备后可重试）。
+        let (engine, mut rx) = engine_with_bus();
+        engine.set_output(Arc::new(FailingStartSink)).await;
+        engine
+            .play_pcm("open-fail".into(), 44_100, 1, vec![0; 64], 1.0)
+            .await;
+        let error = wait_playback_failed(&mut rx).await;
+        assert_eq!(error.stage, "open");
+        assert_eq!(error.code, "device_start_failed");
+        assert!(error.retryable, "choosing another output must be retryable");
+        assert!(!error.suggestion.is_empty());
     }
 
     #[tokio::test]

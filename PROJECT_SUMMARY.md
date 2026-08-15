@@ -69,10 +69,10 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 253 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 255 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，95 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+- Flutter analyze 零问题，96 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
   边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
   本地化、发布者索引、离线队列提示、播放模式边界、声明式配置控件与敏感字段、
   网络曲目播放入口、音乐目录设置、发布向导、操作取消与曲库统一同步）；
@@ -133,6 +133,9 @@
 - Rendition 选择（DST-002）：全部 rendition 源随曲库同步映射到客户端，播放前按平台
   能力（Web 容器/编解码白名单）、质量（lossless/original 优先）与网络策略（计量网络
   偏好有损流式小体积）选择内容 CID；
+- 播放失败矩阵（PLR-008）：设备热拔插/丢失（write/device_write_failed 可重试）、
+  打开失败（open/device_start_failed）、文件损坏（decode/decode_failed 不可重试）、
+  网络中断（传输流读取端断开任务保持可恢复，播放器结构化失败且不伪装播放）；
 - 音乐目录设置（UI-009）：曲库页查询/设置音乐目录（仅切换语义，明示复制/移动未实现）；
 - 发布向导（UI-004）：元数据（标题/艺术家/专辑/许可证/内容标签）+ 多 rendition 编辑
   （增删、ID/容器/编解码/采样率/位深/声道/字节长度、唯一 original）校验并生成

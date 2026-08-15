@@ -34,7 +34,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLR-005 | 本机通过 | Core 队列自动续播、`LibraryService` 命名歌单、Flutter 歌单；重启测试 | 七端 UI E2E 待执行 |
 | PLR-006 | 待外证 | Symphonia 增量解码声明 MP3/AAC/FLAC/WAV/OGG/Opus | 格式语料和七端声明矩阵未运行，DSD 不支持 |
 | PLR-007 | 本机通过 | `LibraryTrackV1`/`TrackSourceV1` 统一描述来源；网络 Source 接入同一播放入口：`playNetworkTrack` 按内容 CID 建立幂等 fetch 传输并边下边播，本地/网络曲目在列表同一入口播放；Flutter 测试 1 项 | 七端真实网络抖动下的体验待验收 |
-| PLR-008 | 部分实现 | `PlaybackFailure` 含来源、阶段、码、重试、建议；失败测试 | 网络中断和设备热拔插矩阵不完整 |
+| PLR-008 | 本机通过 | `PlaybackFailure` 含来源、阶段、码、重试、建议；失败矩阵：设备热拔插/丢失（write 阶段 device_write_failed 可重试）、打开失败（open/device_start_failed）、文件损坏/解码失败（decode/decode_failed 不可重试）、网络中断（传输流读取端断开任务保持可恢复、播放器结构化失败且不伪装播放）；Rust 3 项 + Flutter 1 项测试 | 七端实测待补 |
 | PLR-009 | 本机通过 | `PlaybackSessionV1` 保存曲目、队列、位置、路径且强制 `auto_play=false`；重启测试；会话统一：本地有活动会话时推送（ID 换算），否则从控制面恢复位置与队列，恢复路径强制不自动播放；测试 | 多设备同时编辑会话的冲突策略待验收 |
 | PLR-010 | 本机通过 | `choose_source` 按 codec/质量选择，失败返回所需 codec；单测 | Flutter 尚未展示插件安装直达入口 |
 

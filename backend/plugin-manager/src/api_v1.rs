@@ -3692,6 +3692,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn transfer_stream_reader_disconnect_leaves_task_resumable() {
+        // 网络中断：客户端在边下边播流中途断开，任务必须保持可恢复，
+        // 已落盘 part 不被破坏。
+        let (state, _dir) = state();
+        let task = streaming_task(&state, "stream-req-cut", "bafy-stream-cut");
+        let parts = state.repo_dir.join("transfer-parts");
+        std::fs::create_dir_all(&parts).unwrap();
+        let part = parts.join(format!("{}.part", task.task_id));
+        std::fs::write(&part, b"0123456789").unwrap();
+
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri(format!("/transfers/{}/stream", task.task_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        let first = tokio::time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .expect("first chunk")
+            .expect("stream open")
+            .expect("chunk ok");
+        assert_eq!(&first[..], b"0123456789");
+
+        // 模拟网络中断：丢弃读取端。
+        drop(body);
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let record = state
+            .transfers
+            .get(&task.task_id)
+            .expect("task must survive reader disconnect");
+        assert!(
+            !matches!(record.state, TransferState::Failed),
+            "disconnect must not fail the task: {:?}",
+            record.state
+        );
+        assert_eq!(std::fs::read(&part).unwrap(), b"0123456789");
+    }
+
+    #[tokio::test]
     async fn transfer_stream_honors_single_byte_range() {
         use http_body_util::BodyExt;
 
