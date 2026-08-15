@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 260 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 261 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，96 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -164,6 +164,8 @@
 - Helia 依赖生产审计为 0 个漏洞；bundle 构建和 Rust↔Helia 无网关互操作通过；
 - Rust workspace、Flutter Web、Flutter Linux release build 通过；Linux bundle 已注入三个
   原生库且动态依赖无缺失；
+- 实时路径违规门禁（AGR-005）：计数全局分配器下对已构建插件写入路径连跑 2,000 次
+  （0 次堆分配、单次写入 <10ms、总墙钟 <5s，超限失败）；
 - 控制服务和应用内核心均使用 Rust TLS，workspace 依赖树不含 `native-tls`/OpenSSL；
 - release 服务以旧 repo 启动并完成新增字段迁移，健康/鉴权/签名启动源冒烟通过；
 - 实时 deadline 基准（NFR-004）：`rt_deadline_bench`（release）20,000 块基线 0 超时

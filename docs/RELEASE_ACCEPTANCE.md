@@ -9,8 +9,9 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（260） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、三入口策略标注、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
+| Rust tests | 通过（261） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、三入口策略标注、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
+| 实时路径违规门禁 | 通过 | 计数全局分配器下对已构建插件写入路径连跑 2,000 次：0 次堆分配、单次写入 <10ms、总墙钟 <5s（超限失败）；FFI 测试 1 项 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
 | Flutter tests | 通过（96） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、网络曲目播放入口、Rendition 选择、音乐目录设置、发布向导（含多 rendition 编辑）、三入口策略应用、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
@@ -59,7 +60,7 @@
 | 社区原生二次确认 | 通过 | 社区原生默认拒绝（CommunityNativeDenied）；高级授权安装前二次确认（持续警告文案），已安装插件列表永久标记警告条目；后端安装/撤销 E2E 测试 + Flutter 4 项测试 |
 | 实时 deadline 基准 | 通过 | `rt_deadline_bench`（release）20,000 块基线：0 超时、max 7.7µs vs 10.7ms deadline；CI verify 门禁运行并上传基线（超时占比 >1% 失败） |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 99、部分实现 23、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 100、部分实现 22、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 
