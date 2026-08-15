@@ -72,7 +72,7 @@
 - Rust format、Clippy（all targets/all features，`-D warnings`）和 250 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，71 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+- Flutter analyze 零问题，73 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
   边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
   本地化、发布者索引、离线队列提示、播放模式边界、声明式配置控件与敏感字段、
   网络曲目播放入口、音乐目录设置、发布向导、操作取消与曲库统一同步）；
@@ -122,9 +122,9 @@
 - 网络曲目播放入口（PLR-007）：网络曲目（Manifest/社区）与本地曲目在列表同一入口
   播放——按内容 CID 建立幂等 fetch 传输并边下边播；
 - 音乐目录设置（UI-009）：曲库页查询/设置音乐目录（仅切换语义，明示复制/移动未实现）；
-- 发布向导（UI-004）：元数据（标题/艺术家/专辑/许可证/内容标签）+ rendition 表单
-  校验并生成 Manifest，签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方
-  服务数量）；
+- 发布向导（UI-004）：元数据（标题/艺术家/专辑/许可证/内容标签）+ 多 rendition 编辑
+  （增删、ID/容器/编解码/采样率/位深/声道/字节长度、唯一 original）校验并生成
+  Manifest，签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方服务数量）；
 - 插件目录浏览（PLG-005）：`GET /v1/plugins/catalog` 列出社区目录收录的 PluginManifest
   条目并支持 `q` 搜索（CID/分类/标签/注解），`/catalog/{cid}` 详情解析 Manifest
   （JSON/DAG-CBOR 双编码）并给出制品可用性/已装状态/升级可用/撤销摘要；插件页

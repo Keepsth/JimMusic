@@ -430,7 +430,7 @@ CatalogFeed 与 PolicyFeed 使用相同的签名事件基础设施，但语义�
 | UI-001 | P0     | ALL  | 部分实现 | 播放页显示真实状态、进度、音量、来源、缓存/网络状态和错误                 | 状态来自服务事件，不来自模拟计时器   |
 | UI-002 | P0     | ALL  | 部分实现 | 曲库支持导入、扫描、搜索、排序、来源和可用性标记                          | 本地、IPFS 和社区条目可区分          |
 | UI-003 | P0     | ALL  | 待验证   | 下载页展示任务状态、速度、Provider、校验、暂停/恢复和存储位置             | 所有 TransferTask 状态可操作         |
-| UI-004 | P0     | ALL  | 部分实现 | 发布页完成元数据、权利声明、rendition、签名、Pin 和副本健康度流程         | 不完整发布不能进入公共 Feed；向导已落地（元数据/rendition/副本健康度），多 rendition 编辑与七端验收待补          |
+| UI-004 | P0     | ALL  | 本机通过 | 发布页完成元数据、权利声明、rendition、签名、Pin 和副本健康度流程         | 不完整发布不能进入公共 Feed；向导已落地（元数据/多 rendition 编辑/副本健康度），七端验收待补          |
 | UI-005 | P0     | ALL  | 待验证   | 社区源页分别控制发现与过滤，展示维护者、签名和同步状态                    | 来源异常与策略冲突可解释             |
 | UI-006 | P0     | ALL  | 待验证   | 插件页展示兼容性、信任通道、权限、版本、依赖、状态和回滚                  | 不兼容/撤销/失败状态不可误报为已安装 |
 | UI-007 | P0     | ALL  | 待验证   | Audio Path 页面展示图节点、格式转换、延迟、旁路、输出会话和掉音统计       | 与 AudioGraphService 快照一致        |
@@ -1071,9 +1071,9 @@ HTTP 控制面统一使用 /v1，默认仅绑定回环地址并受 Bearer token 
 | 播放引擎       | 增量解码、有界 PCM、类型化 DAG、格式转换、延迟补偿、原子切换和统计；双时间线 gapless/crossfade | DSP 节点崩溃/超时注入链路、动态延迟与节点状态迁移未完整执行；七端音频语料待验收 |
 | 音频输出       | null、CPAL system output 已接桌面 FFI；Web Audio 有 ABI/Worklet 参考实现 | Web Audio 未接 Flutter PCM；无独占、ASIO、CoreAudio Hog、DSD 证据  |
 | 插件 ABI       | Audio ABI v2、Manifest、权限/依赖/配置/制品 DTO、legacy 输出适配与 Wasmtime 无 WASI/capability 沙箱 | Web/iOS/HarmonyOS 插件执行载体与完整声明式 ControlPanel 渲染未闭环 |
-| 插件管理器     | 强制签名/CID/摘要、预检、事务安装、持久状态、启停、回滚、隔离、安全模式；社区撤销策略刷新后自动停用被撤销发布  | 远端目录、运行时权限强制和独立进程隔离不完整            |
+| 插件管理器     | 强制签名/CID/摘要、预检、事务安装、持久状态、启停、回滚、隔离、安全模式；社区目录浏览/搜索/详情/安装；社区撤销策略刷新后自动停用被撤销发布  | 运行时权限强制和独立进程隔离不完整            |
 | 节点/IPFS      | rust-ipfs UnixFS/Bitswap/Kademlia/mDNS/TCP/WS/QUIC、Pin/配额/稳定 PeerId 与 Web Helia 直连互操作；网络类别策略暂停/恢复传输 | 真实浏览器中继、Kubo 额外互操作与移动端网络闭环待外证；上传限速显式不支持（PROD-004）、自动复刻未实现 |
-| 音乐分发       | Manifest/rendition、签名 Feed、原子下载、持久优先级调度与任务恢复；收藏协助 Pin 与第三方 Pin 服务 | 缺另一节点从 Feed 解析到播放的 UI 闭环和完整发布向导；边下边播已落地（传输 part 流端点 + 播放器接入），七端实测待补 |
+| 音乐分发       | Manifest/rendition、签名 Feed、原子下载、持久优先级调度与任务恢复；收藏协助 Pin 与第三方 Pin 服务 | 缺另一节点从 Feed 解析到播放的 UI 闭环；发布向导已落地（元数据/多 rendition 编辑/副本健康度），边下边播已落地（传输 part 流端点 + 播放器接入），七端实测待补 |
 | 社区发现       | 双 Feed、可禁用签名启动源、URI/CID/IPNS 导入、换钥/撤销与加密举报、直接关注发布者（关注后作品进媒体库并保留）        | 启动源尚无远端 Feed；缺相机扫码；Feed 快照/压缩已落地（紧凑快照 + gzip + 摘要 + 上限），远端实测待补                   |
 | 音乐目录       | 后端持久曲库/扫描/缺失标记/歌单/会话和 Flutter 曲库经统一同步双向合并（本地优先，来源可区分） | 无目录监控、迁移和 Web 持久目录闭环                  |
 | CI/发布        | 七端同提交 gate、签名、摘要、SBOM、provenance 和逐 P0 追踪已配置         | 尚无受控 tag 产物、Harmony runner、硬件实验室和七端 RC 实际证据    |
