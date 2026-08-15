@@ -462,6 +462,36 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  /// COM-011：查询目标的社区策略决策。
+  Future<Map<String, dynamic>?> policyDecision(String target) async {
+    final api = _makeApi();
+    try {
+      return _map(await api.get('/policy/${Uri.encodeComponent(target)}'));
+    } catch (error) {
+      _error = error.toString();
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
+
+  /// COM-011：本地覆盖非强制策略（warn/demote/hide）。
+  Future<void> overridePolicy(String target, String reason) async {
+    final requestId = 'override-${DateTime.now().microsecondsSinceEpoch}';
+    await _mutate(
+      (api) => api.post(
+        '/policy/${Uri.encodeComponent(target)}/override',
+        {'request_id': requestId, 'reason': reason.trim()},
+      ),
+    );
+  }
+
+  /// COM-011：取消本地覆盖，恢复社区决策。
+  Future<void> clearPolicyOverride(String target) => _mutate(
+    (api) => api.delete('/policy/${Uri.encodeComponent(target)}/override'),
+  );
+
   Future<void> unfollowPublisher(String identityCid) => _mutate(
     (api) =>
         api.delete('/community-sources/follows/${Uri.encodeComponent(identityCid)}'),

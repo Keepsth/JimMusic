@@ -86,7 +86,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | NOD-002 | 部分实现 | Helia 7 + IndexedDB + Bitswap + WebSocket/WebTransport/WebRTC/relay；删除 delegated HTTP router；生成 bundle 和 Rust 节点互操作测试 | 真实浏览器经测试中继的关闭网关验收待外证 |
 | NOD-003 | 本机通过 | Rust Core UnixFS、Bitswap、Kademlia、mDNS、TCP/WebSocket/QUIC、Pin/持久仓库；600 KB Helia 互操作与整文件摘要测试 | Android/iOS/HarmonyOS 原生构建和 Kubo 额外实测待外证 |
 | NOD-004 | 本机通过 | raw/DAG-CBOR CIDv1 及 rust-ipfs Block 校验；错误 CID 提交拒绝、跨节点 Bitswap/UnixFS 测试 | 大规模恶意 peer/fuzz 待后续强化 |
-| NOD-005 | 本机通过 | Pin/Unpin/list 持久化与 ProviderHealth；重启测试/UI | 第三方 pin service 未实现 |
+| NOD-005 | 本机通过 | Pin/Unpin/list 持久化与 ProviderHealth；重启测试/UI；第三方 Kubo 兼容 Pin 服务已落地（DST-009：配置、推送、端点校验） | 远端 Pin 服务状态监控与七端 UI 展示待验收 |
 | NOD-006 | 部分实现 | 存储/缓存/并发/上下行/计量配置；下载限速与新任务并发更新；网络类别声明（wifi/cellular/ethernet/unknown）+ 网络策略暂停/恢复：蜂窝且未允许计量 → 全部暂停、蜂窝下 `wifi_only` 任务无条件暂停、回到允许类别只自动恢复网络暂停任务（用户手动暂停不打扰），结构化原因 `paused_wifi_only`/`paused_metered_network` 并随传输事件推送；runner 执行前复查并在被重新排队时安全中止；服务 2 项 + API 2 项测试 | 上传限速：内嵌 rust-ipfs Bitswap 无带宽节流，API 按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示暂不支持；自动复刻未实现 |
 | NOD-007 | 本机通过 | `/v1/diagnostics` + UI 脱敏快照包含真实传输/路由/计数；精确 peer/listener 地址刻意不进入可分享报告 | 七端抓包与隐私复验待 RC |
 | NOD-008 | 部分实现 | Web pagehide/pageshow/visibility 与 Android/iOS/HarmonyOS/桌面 Rust FFI 生命周期；UI 明示后台降级且关闭后不持续 | 移动系统后台限制和打包结果待物理设备外证 |
@@ -119,7 +119,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | COM-008 | 本机通过 | Catalog/Policy 分别启停、刷新、删除并清理索引/策略；API/UI | 离线刷新队列未实现 |
 | COM-009 | 部分实现 | 内置签名 bootstrap 可独立禁用/永久移除且重启不复现；支持裸 CID、ipfs://、ipns://、jimmusic:// URI 与粘贴式 UI；测试 | 启动源尚未发布远端 Feed 头，缺相机二维码扫描与 IPNS/Kubo 互操作实测 |
 | COM-010 | 本机通过 | ModerationReport 验签/匿名约束；X25519 + XChaCha20-Poly1305 封装/解密/篡改拒绝；持久离线队列、30s–1h 指数退避、显式重试；明文不出站测试；API/UI | 七端 UX、真实维护者端和抓包证据待 RC |
-| COM-011 | 部分实现 | policy decision 返回来源、动作、原因、到期和本地覆盖 | UI 申诉/逐条覆盖非强制策略未实现 |
+| COM-011 | 本机通过 | policy decision 返回来源、动作、原因、到期和本地覆盖；本地覆盖/申诉 API（POST/DELETE `/policy/{target}/override`）只作用于 warn/demote/hide，block/revoke 强制拒绝覆盖，取消覆盖恢复社区决策并推送 `policy.decision_changed`；社区页新增策略查询与覆盖对话框；API 测试 1 项 + Flutter 测试 1 项 | 七端交互与申诉全流程待验收 |
 | COM-012 | 本机通过 | 按头 CID 增量回溯并限制 hop、已见事件不重复摄取；FeedLimits（事件数/字节）在摄取时强制；紧凑快照（每目标最新未过期事件）锚定签名事件链头，快照端点支持 `Accept-Encoding: gzip` 传输压缩、`x-snapshot-sha256`/`x-snapshot-bytes` 完整性头与 32 MiB 未压缩上限（超限 413 结构化错误）；API 测试 | 大型远端 Feed 的跨版本压缩快照与七端消费实测待验收 |
 | COM-013 | 本机通过 | 连续 key event Feed；轮换需旧/新双签名，撤销终止后续 Feed，未知直接替换被拒；API/UI/负向测试 | 七端交互与恢复证据待 RC |
 
@@ -154,7 +154,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | SEC-008 | 本机通过 | 许可证/权利、内容标签、发布者签名 Validate；发布测试 | UI 向导仍允许高级 JSON 编辑 |
 | SEC-009 | 部分实现 | 本地 block、社区 policy、来源解释、签名举报队列与重试 | UI 申诉和跨入口策略执行仍不完整 |
 | SEC-010 | 本机通过 | 脱敏诊断排除秘密/路径；匿名举报禁止身份字段，加密举报只发送 envelope；隐私测试 | 需七端抓包复验 |
-| SEC-011 | 部分实现 | 身份轮换/撤销签名、防旧 Feed 重放；插件 revoked preflight | 插件撤销 Feed 快照防回滚未实现 |
+| SEC-011 | 本机通过 | 身份轮换/撤销签名、防旧 Feed 重放；插件 revoked preflight；撤销 Feed 快照防回滚：`enable`/`rollback` 对已撤销发布拒绝（含状态被手工改回 Disabled 的绕过场景），`mutate_record` 修复为保留域错误语义；生命周期测试 2 项 | 撤销 Feed 的跨版本快照恢复与七端交互待验收 |
 | SEC-012 | 本机通过 | DAG-CBOR 深度/大小/集合/文本限制，HTTP body/response/artifact/feed hop 限制；负向测试 | 尚无持续 fuzz job |
 
 ## 非功能与发布

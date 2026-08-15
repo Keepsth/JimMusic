@@ -9,11 +9,11 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（233） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别策略、策略撤销自动停用、收藏协助 Pin 与发布者关注，workspace/all targets/all features |
+| Rust tests | 通过（236） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别策略、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注与策略本地覆盖，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（48） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者 mutation、曲库统一同步 |
+| Flutter tests | 通过（49） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -29,8 +29,10 @@
 | 收藏协助 Pin | 通过 | 收藏时按显式开关协助 Pin 内容 CID（本地直 Pin / 幂等 Pin 传输任务）；显式 Pin 与发布后推送第三方 Kubo 兼容 Pin 服务，端点校验；API 测试 2 项 |
 | 发布者关注 | 通过 | 关注发布者后其目录内 Manifest 经解析/验签导入媒体库，禁用全部 Catalog 后仍可搜索播放；关注/取消/列表 API + 社区页 UI；API 测试 1 项 + Flutter 1 项 |
 | 曲库统一同步 | 通过 | 本地文件推送（路径派生稳定 ID，跨语言黄金向量）、Manifest/社区拉取合并、收藏/歌单双向、会话推送或恢复（绝不自动播放）；控制台曲库同步页 + 列表来源图标；Flutter 6 项测试 |
+| 撤销防回滚 | 通过 | enable/rollback 对已撤销发布拒绝（含手工改回 Disabled 的绕过）；mutate_record 保留域错误语义；生命周期测试 2 项 |
+| 策略本地覆盖 | 通过 | 非强制策略（warn/demote/hide）可本地覆盖/取消，block/revoke 强制拒绝；社区页策略查询对话框；API 1 项 + Flutter 1 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 72、部分实现 50、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 75、部分实现 47、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

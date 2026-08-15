@@ -95,6 +95,10 @@ pub fn routes() -> Router<Arc<AppState>> {
             post(retry_moderation_report),
         )
         .route("/policy/{target}", get(policy_decision))
+        .route(
+            "/policy/{target}/override",
+            post(override_policy).delete(clear_override),
+        )
         .route("/search", get(search))
         .route("/plugins", get(list_plugins))
         .route("/plugins/install", post(install_plugin))
@@ -2111,6 +2115,68 @@ async fn policy_decision(
     Path(target): Path<String>,
 ) -> Json<app_core::community_service::PolicyDecision> {
     Json(state.community.policy_decision(&target, now()))
+}
+
+#[derive(Debug, Deserialize)]
+struct OverridePolicyRequest {
+    #[serde(default)]
+    request_id: Option<String>,
+    reason: String,
+}
+
+/// COM-011：本地覆盖非强制社区决策（warn/demote/hide）；block/revoke
+/// 为强制决策，覆盖请求被结构化拒绝。
+async fn override_policy(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(target): Path<String>,
+    Json(request): Json<OverridePolicyRequest>,
+) -> ApiResult<app_core::community_service::LocalOverrideV1> {
+    let request_id = request_id(&headers, request.request_id.as_deref())?;
+    let fingerprint = crate::state::sha256_hex(
+        serde_json::to_vec(&(&target, &request.reason))
+            .unwrap_or_default()
+            .as_slice(),
+    );
+    let (record, _) = state
+        .idempotency
+        .execute("policy.override", &request_id, &fingerprint, || {
+            state
+                .community
+                .override_policy(&target, request.reason.clone(), now())
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| map_idempotency("policy", "override", error))?;
+    state.events.publish(Event::PolicyChanged {
+        target,
+        decision: "locally_overridden".into(),
+    });
+    Ok(Json(record))
+}
+
+/// 取消本地覆盖，恢复社区决策（COM-011）。
+async fn clear_override(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(target): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let request_id = request_id(&headers, None)?;
+    let fingerprint = crate::state::sha256_hex(target.as_bytes());
+    let (_, _) = state
+        .idempotency
+        .execute("policy.clear_override", &request_id, &fingerprint, || {
+            state
+                .community
+                .clear_override(&target)
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({"cleared": target}))
+        })
+        .map_err(|error| map_idempotency("policy", "clear_override", error))?;
+    state.events.publish(Event::PolicyChanged {
+        target,
+        decision: "community_restored".into(),
+    });
+    Ok(Json(serde_json::json!({"cleared": true})))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -4207,6 +4273,145 @@ mod tests {
                 .any(|track| track["title"] == "Followed Track"),
             "followed publisher content must survive source removal: {search}"
         );
+    }
+
+    fn signed_policy_event(
+        maintainer: &SigningKey,
+        action: jimmusic_protocol::PolicyAction,
+        target: &str,
+        sequence: u64,
+    ) -> jimmusic_protocol::PolicyEventV1 {
+        let mut event = jimmusic_protocol::PolicyEventV1 {
+            schema_version: SCHEMA_V1,
+            action,
+            target_type: "cid".into(),
+            target: target.into(),
+            reason_code: "community_rule".into(),
+            description: format!("{action:?} from override test"),
+            evidence_cids: Vec::new(),
+            scope: Vec::new(),
+            issued_at: 2,
+            expires_at: None,
+            sequence,
+            previous_event_cid: None,
+            signature: None,
+        };
+        event.signature = Some(hex::encode(
+            maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        event
+    }
+
+    #[tokio::test]
+    async fn policy_override_applies_to_non_mandatory_and_rejects_mandatory() {
+        use jimmusic_protocol::PolicyAction;
+
+        let (state, _dir) = state();
+        let maintainer = SigningKey::from_bytes(&[30; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "override.example".into(),
+            name: "Override".into(),
+            description: "override test source".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+        let warn_cid = state
+            .community
+            .ingest_policy(
+                "override.example",
+                signed_policy_event(&maintainer, PolicyAction::Warn, "bafy-warn", 0),
+                &state.node,
+            )
+            .unwrap();
+        let mut block_event =
+            signed_policy_event(&maintainer, PolicyAction::Block, "bafy-block", 1);
+        block_event.previous_event_cid = Some(warn_cid);
+        block_event.signature = Some(hex::encode(
+            maintainer
+                .sign(&block_event.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .ingest_policy("override.example", block_event, &state.node)
+            .unwrap();
+
+        // 覆盖 warn → 决策取消并标记本地覆盖。
+        let decision = state.community.policy_decision("bafy-warn", now());
+        assert_eq!(decision.action, Some(PolicyAction::Warn));
+        let (status, body) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/policy/bafy-warn/override",
+            serde_json::json!({
+                "request_id": "override-1",
+                "reason": "I reviewed this content and disagree"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["target"], "bafy-warn");
+        let decision = state.community.policy_decision("bafy-warn", now());
+        assert_eq!(decision.action, None);
+        assert!(decision.locally_overridden);
+        assert!(decision.reason.unwrap().contains("reviewed"));
+
+        // 取消覆盖 → 恢复社区决策。
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("DELETE")
+                    .uri("/policy/bafy-warn/override")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "override-clear-1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let decision = state.community.policy_decision("bafy-warn", now());
+        assert_eq!(decision.action, Some(PolicyAction::Warn));
+        assert!(!decision.locally_overridden);
+
+        // block 为强制决策：覆盖被结构化拒绝。
+        let (status, body) = call(
+            routes(),
+            state,
+            "POST",
+            "/policy/bafy-block/override",
+            serde_json::json!({
+                "request_id": "override-2",
+                "reason": "attempt to override mandatory block"
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(body["message"].as_str().unwrap().contains("mandatory"));
     }
 
     #[tokio::test]

@@ -262,6 +262,30 @@ void main() {
       expect(fake.requests, contains('/health'));
     });
 
+    test('策略查询与本地覆盖走对应端点', () async {
+      fake.responses['/policy/bafy-target'] = {
+        'target': 'bafy-target',
+        'action': 'warn',
+        'reason': 'community note',
+        'source_ids': ['s1'],
+        'expires_at': null,
+        'locally_overridden': false,
+      };
+      await provider.refresh();
+      final decision = await provider.policyDecision('bafy-target');
+      expect(decision?['action'], 'warn');
+      await provider.overridePolicy('bafy-target', '我复核过该内容');
+      expect(
+        fake.mutations.join('\n'),
+        contains('POST /policy/bafy-target/override'),
+      );
+      await provider.clearPolicyOverride('bafy-target');
+      expect(
+        fake.mutations.join('\n'),
+        contains('DELETE /policy/bafy-target/override'),
+      );
+    });
+
     test('关注与取消关注发布者走对应 mutation 端点', () async {
       await provider.refresh();
       await provider.followPublisher('bafy-id', 'jm:publisher', 'Name');

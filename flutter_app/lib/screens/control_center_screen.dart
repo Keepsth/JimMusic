@@ -1241,6 +1241,13 @@ class _CommunityTab extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           FloatingActionButton.small(
+            heroTag: 'policy-inspect',
+            tooltip: '策略查询与本地覆盖（COM-011）',
+            onPressed: () => _policyInspector(context),
+            child: const Icon(Icons.policy),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.small(
             heroTag: 'import-community-source',
             tooltip: '从 URI / CID / IPNS 导入（二维码使用同一 URI）',
             onPressed: () => _import(context),
@@ -1437,6 +1444,115 @@ class _CommunityTab extends StatelessWidget {
                 );
               },
             ),
+    );
+  }
+
+  /// COM-011：策略查询 + 非强制策略的本地覆盖/取消。
+  Future<void> _policyInspector(BuildContext context) async {
+    final target = TextEditingController();
+    final reason = TextEditingController();
+    Map<String, dynamic>? decision;
+    String? decisionError;
+    final messenger = ScaffoldMessenger.of(context);
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('策略查询与本地覆盖'),
+          content: SizedBox(
+            width: 520,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: target,
+                  decoration: const InputDecoration(
+                    labelText: '目标 CID / 发布者 ID',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                if (decision != null) ...[
+                  SelectableText(
+                    '动作：${decision!['action'] ?? '无'}\n'
+                    '理由：${decision!['reason'] ?? '-'}\n'
+                    '来源：${(decision!['source_ids'] as List<dynamic>? ?? const []).join(', ')}\n'
+                    '到期：${decision!['expires_at'] ?? '无'}\n'
+                    '本地覆盖：${decision!['locally_overridden'] ?? false}',
+                  ),
+                  const SizedBox(height: 8),
+                  if (decision!['action'] != null &&
+                      decision!['locally_overridden'] != true) ...[
+                    TextField(
+                      controller: reason,
+                      decoration: const InputDecoration(
+                        labelText: '覆盖理由（申诉说明）',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (decision!['locally_overridden'] == true)
+                    FilledButton(
+                      onPressed: () async {
+                        await control.clearPolicyOverride(target.text.trim());
+                        messenger.showSnackBar(
+                          const SnackBar(content: Text('已取消本地覆盖')),
+                        );
+                        if (dialogContext.mounted) {
+                          Navigator.pop(dialogContext);
+                        }
+                      },
+                      child: const Text('取消本地覆盖'),
+                    ),
+                ],
+                if (decisionError != null)
+                  Text(
+                    decisionError!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+            FilledButton(
+              onPressed: () async {
+                final result = await control.policyDecision(
+                  target.text.trim(),
+                );
+                setState(() {
+                  decision = result;
+                  decisionError = result == null ? control.error : null;
+                });
+              },
+              child: const Text('查询'),
+            ),
+            if (decision != null &&
+                decision!['action'] != null &&
+                decision!['locally_overridden'] != true)
+              FilledButton(
+                onPressed: () async {
+                  await control.overridePolicy(
+                    target.text.trim(),
+                    reason.text.trim(),
+                  );
+                  messenger.showSnackBar(
+                    const SnackBar(content: Text('已提交本地覆盖')),
+                  );
+                  final result = await control.policyDecision(
+                    target.text.trim(),
+                  );
+                  setState(() => decision = result);
+                },
+                child: const Text('本地覆盖'),
+              ),
+          ],
+        ),
+      ),
     );
   }
 

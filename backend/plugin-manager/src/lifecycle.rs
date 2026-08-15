@@ -495,12 +495,23 @@ impl PluginLifecycleService {
     }
 
     pub fn enable(&self, plugin_id: &str) -> Result<PluginRuntimeRecord, PluginLifecycleError> {
+        let revoked = self.store.snapshot().revoked_releases.clone();
         self.mutate_record(plugin_id, |record| {
             if matches!(
                 record.lifecycle_state,
                 PluginLifecycleState::Revoked | PluginLifecycleState::Quarantined
             ) {
                 return Err(PluginLifecycleError::Quarantined);
+            }
+            // SEC-011：活动发布被撤销后，即使状态被改回 Disabled/Installed
+            // 也不能重新启用（防止旧安全快照或手工状态绕过撤销）。
+            let active_revoked = record
+                .active_version
+                .as_ref()
+                .and_then(|version| record.versions.get(version))
+                .is_some_and(|version| revoked.contains(&version.manifest_cid));
+            if active_revoked {
+                return Err(PluginLifecycleError::Revoked);
             }
             record.lifecycle_state = PluginLifecycleState::Enabled;
             record.consecutive_failures = 0;
@@ -545,13 +556,20 @@ impl PluginLifecycleService {
     }
 
     pub fn rollback(&self, plugin_id: &str) -> Result<PluginRuntimeRecord, PluginLifecycleError> {
+        let revoked = self.store.snapshot().revoked_releases.clone();
         self.mutate_record(plugin_id, |record| {
             let previous = record
                 .rollback_version
                 .clone()
                 .ok_or(PluginLifecycleError::NoRollback)?;
-            if !record.versions.contains_key(&previous) {
-                return Err(PluginLifecycleError::NoRollback);
+            let previous_version = record
+                .versions
+                .get(&previous)
+                .ok_or(PluginLifecycleError::NoRollback)?;
+            // SEC-011：撤销 Feed 快照防回滚——回滚目标发布被撤销时拒绝，
+            // 防止重新启用已知恶意/被撤销版本。
+            if revoked.contains(&previous_version.manifest_cid) {
+                return Err(PluginLifecycleError::Revoked);
             }
             record.rollback_version = record.active_version.replace(previous);
             record.lifecycle_state = PluginLifecycleState::Installed;
@@ -696,25 +714,30 @@ impl PluginLifecycleService {
             return Err(PluginLifecycleError::NotFound(plugin_id.into()));
         }
         let mut update = Some(update);
+        let mut domain_error: Option<PluginLifecycleError> = None;
         let result = self.store.transact(|state| {
             let record = state.plugins.get_mut(plugin_id).expect("checked above");
-            update.take().expect("called once")(record).map_err(|error| StorageError::Corrupt {
-                path: PathBuf::from("plugin-lifecycle"),
-                reason: error.to_string(),
-            })?;
+            if let Err(error) = update.take().expect("called once")(record) {
+                domain_error = Some(error);
+                return Err(StorageError::Corrupt {
+                    path: PathBuf::from("plugin-lifecycle"),
+                    reason: "domain update rejected".into(),
+                });
+            }
             record.updated_at = now();
             Ok(record.clone())
         });
-        result.map_err(|error| {
-            let text = error.to_string();
-            if text.contains("no rollback") {
-                PluginLifecycleError::NoRollback
-            } else if text.contains("quarantined") {
-                PluginLifecycleError::Quarantined
-            } else {
-                PluginLifecycleError::Storage(error)
+        match result {
+            Ok(record) => Ok(record),
+            Err(error) => {
+                // 保留域错误（Revoked/NoRollback/Quarantined 等），
+                // 不要用字符串匹配把语义压平。
+                if let Some(domain) = domain_error.take() {
+                    return Err(domain);
+                }
+                Err(PluginLifecycleError::Storage(error))
             }
-        })
+        }
     }
 }
 
@@ -883,6 +906,7 @@ fn now() -> i64 {
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+    use jimmusic_protocol::cid_v1_for;
 
     fn signed_manifest(key: &SigningKey, bytes: &[u8], version: &str) -> PluginManifestV1 {
         let mut manifest = PluginManifestV1 {
@@ -990,6 +1014,63 @@ mod tests {
             Err(PluginLifecycleError::Permissions(_))
         ));
         assert!(service.list().is_empty());
+    }
+
+    #[test]
+    fn revoked_release_cannot_be_re_enabled_after_disable() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = PluginLifecycleService::open(dir.path()).unwrap();
+        service
+            .add_official_publisher("org.example".into())
+            .unwrap();
+        let key = SigningKey::from_bytes(&[1; 32]);
+        let manifest = signed_manifest(&key, b"v1", "1.0.0");
+        let manifest_cid = cid_v1_for(&manifest).unwrap();
+        service
+            .install(manifest, b"v1", context(&key, "req-1"))
+            .unwrap();
+        service.enable("org.example.output").unwrap();
+
+        service.revoke_release(&manifest_cid).unwrap();
+        let record = service.get("org.example.output").unwrap();
+        assert_eq!(record.lifecycle_state, PluginLifecycleState::Revoked);
+        // 状态被改回 Disabled 后，重新启用仍必须被拒绝（SEC-011 防绕过）。
+        service.disable("org.example.output").unwrap();
+        assert!(matches!(
+            service.enable("org.example.output"),
+            Err(PluginLifecycleError::Revoked)
+        ));
+    }
+
+    #[test]
+    fn rollback_to_revoked_release_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = PluginLifecycleService::open(dir.path()).unwrap();
+        service
+            .add_official_publisher("org.example".into())
+            .unwrap();
+        let key = SigningKey::from_bytes(&[1; 32]);
+        let v1 = signed_manifest(&key, b"v1", "1.0.0");
+        let v1_cid = cid_v1_for(&v1).unwrap();
+        service.install(v1, b"v1", context(&key, "req-1")).unwrap();
+        service
+            .install(
+                signed_manifest(&key, b"v2", "2.0.0"),
+                b"v2",
+                context(&key, "req-2"),
+            )
+            .unwrap();
+        // 撤销 v1（当前为回滚目标，活动版本 v2 不受影响）。
+        let revoked = service.revoke_release(&v1_cid).unwrap();
+        assert!(revoked.is_empty());
+        assert_eq!(
+            service.get("org.example.output").unwrap().lifecycle_state,
+            PluginLifecycleState::Installed
+        );
+        assert!(matches!(
+            service.rollback("org.example.output"),
+            Err(PluginLifecycleError::Revoked)
+        ));
     }
 
     #[test]

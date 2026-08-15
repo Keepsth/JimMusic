@@ -113,6 +113,18 @@ struct CommunityRepositoryState {
     feed_limits: FeedLimits,
     #[serde(default)]
     followed_publishers: BTreeMap<String, FollowedPublisherV1>,
+    #[serde(default)]
+    local_overrides: BTreeMap<String, LocalOverrideV1>,
+}
+
+/// 本地策略覆盖（COM-011）：对 warn/demote/hide 等非强制社区决策的
+/// 用户级覆盖与申诉记录；block/revoke 为强制决策，不可覆盖。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LocalOverrideV1 {
+    pub schema_version: u16,
+    pub target: String,
+    pub reason: String,
+    pub overridden_at: i64,
 }
 
 /// 直接关注的发布者（COM-003）：以发布者身份 CID 为键的本地关注记录。
@@ -198,6 +210,7 @@ impl CommunitySourceService {
                     moderation_reports: BTreeMap::new(),
                     removed_bootstrap_sources: BTreeSet::new(),
                     followed_publishers: BTreeMap::new(),
+                    local_overrides: BTreeMap::new(),
                     feed_limits: FeedLimits::default(),
                 },
             )?,
@@ -812,6 +825,62 @@ impl CommunitySourceService {
     }
 
     /// 本地屏蔽优先；否则取所有启用且未过期 Policy 中最高严重度，并列出决策来源。
+    /// COM-011：对非强制社区决策（warn/demote/hide）建立本地覆盖/申诉。
+    /// block/revoke 为强制决策，覆盖请求被拒绝。
+    pub fn override_policy(
+        &self,
+        target: &str,
+        reason: String,
+        timestamp: i64,
+    ) -> Result<LocalOverrideV1, CommunityError> {
+        let target = target.trim().to_string();
+        let reason = reason.trim().to_string();
+        if target.is_empty() || target.len() > 256 || reason.is_empty() || reason.len() > 2000 {
+            return Err(CommunityError::Invalid(
+                "target and reason must be non-empty and bounded".into(),
+            ));
+        }
+        let decision = self.policy_decision(&target, timestamp);
+        if matches!(
+            decision.action,
+            Some(PolicyAction::Block) | Some(PolicyAction::Revoke)
+        ) {
+            return Err(CommunityError::Invalid(
+                "block and revoke decisions are mandatory and cannot be locally overridden".into(),
+            ));
+        }
+        if decision.action.is_none() {
+            return Err(CommunityError::Invalid(
+                "there is no community decision to override for this target".into(),
+            ));
+        }
+        let record = LocalOverrideV1 {
+            schema_version: SCHEMA_V1,
+            target: target.clone(),
+            reason,
+            overridden_at: timestamp,
+        };
+        self.store.transact(|state| {
+            state.local_overrides.insert(target, record.clone());
+            Ok(())
+        })?;
+        Ok(record)
+    }
+
+    pub fn clear_override(&self, target: &str) -> Result<(), CommunityError> {
+        self.store.transact(|state| {
+            state
+                .local_overrides
+                .remove(target)
+                .ok_or_else(|| StorageError::Corrupt {
+                    path: PathBuf::from("local-overrides"),
+                    reason: format!("no local override for `{target}`"),
+                })
+                .map(|_| ())
+        })?;
+        Ok(())
+    }
+
     /// 当前生效（未过期、来源策略已启用）的 Revoke 决策目标集合。
     /// 插件管理面用它在下一次策略刷新/摄取后自动停用被撤销的发布
     /// （PLG-009）：目标按内容寻址 CID 匹配已安装版本的 manifest CID。
@@ -882,6 +951,23 @@ impl CommunitySourceService {
         };
         let action = highest.event.action;
         let reason = highest.event.description.clone();
+        // COM-011：本地覆盖只对非强制决策（warn/demote/hide）生效；
+        // block/revoke 保持强制。
+        if let Some(local_override) = state.local_overrides.get(target) {
+            if matches!(
+                action,
+                PolicyAction::Warn | PolicyAction::Demote | PolicyAction::Hide
+            ) {
+                return PolicyDecision {
+                    target: target.into(),
+                    action: None,
+                    reason: Some(local_override.reason.clone()),
+                    source_ids: Vec::new(),
+                    expires_at: None,
+                    locally_overridden: true,
+                };
+            }
+        }
         let matching: Vec<_> = latest_by_source
             .into_iter()
             .filter(|(_, stored)| stored.event.action == action)
