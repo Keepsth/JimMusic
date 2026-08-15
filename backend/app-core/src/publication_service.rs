@@ -70,17 +70,23 @@ pub struct PublicationService {
 
 impl PublicationService {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, PublicationError> {
-        Ok(Self {
-            store: AtomicJsonStore::open(
-                path,
-                PublicationRepositoryState {
-                    schema_version: SCHEMA_V1,
-                    identities: BTreeMap::new(),
-                    manifests: BTreeMap::new(),
-                    events: BTreeMap::new(),
-                },
-            )?,
-        })
+        let path = path.into();
+        let store = AtomicJsonStore::open(
+            &path,
+            PublicationRepositoryState {
+                schema_version: SCHEMA_V1,
+                identities: BTreeMap::new(),
+                manifests: BTreeMap::new(),
+                events: BTreeMap::new(),
+            },
+        )?;
+        // NFR-014/API-007：拒绝更新版本写入的状态（降级保护），保留原文件。
+        crate::storage::reject_future_schema_version(
+            store.snapshot().schema_version,
+            SCHEMA_V1,
+            &path,
+        )?;
+        Ok(Self { store })
     }
 
     pub fn register_identity(

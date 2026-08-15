@@ -116,13 +116,20 @@ impl TransferService {
         path: impl Into<PathBuf>,
         events: EventBus,
     ) -> Result<Self, TransferError> {
+        let path = path.into();
         let store = AtomicJsonStore::open(
-            path,
+            &path,
             TransferRepositoryState {
                 schema_version: SCHEMA_V1,
                 tasks: BTreeMap::new(),
                 idempotency: BTreeMap::new(),
             },
+        )?;
+        // NFR-014/API-007：拒绝更新版本写入的状态（降级保护），保留原文件。
+        crate::storage::reject_future_schema_version(
+            store.snapshot().schema_version,
+            SCHEMA_V1,
+            &path,
         )?;
         // 杀进程恢复：中间态退回 queued，保留已完成字节和重试计数。
         store.transact(|state| {

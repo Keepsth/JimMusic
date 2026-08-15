@@ -166,6 +166,24 @@ fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Storage
     Ok(())
 }
 
+/// NFR-014/API-007：降级保护——拒绝由更新版本写入的状态（保留原文件，
+/// 不静默改写或清空）。调用方在 open 后用 state 的 schema_version 检查。
+pub fn reject_future_schema_version(
+    found: u16,
+    current: u16,
+    path: &std::path::Path,
+) -> Result<(), StorageError> {
+    if found > current {
+        return Err(StorageError::Corrupt {
+            path: path.to_path_buf(),
+            reason: format!(
+                "state schema_version {found} was written by a newer application version; downgrade is refused (supported version {current})"
+            ),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

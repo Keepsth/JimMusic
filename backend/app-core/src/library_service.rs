@@ -148,18 +148,20 @@ pub struct LibraryService {
 
 impl LibraryService {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, LibraryError> {
-        Ok(Self {
-            store: AtomicJsonStore::open(
-                path,
-                LibraryRepositoryState {
-                    schema_version: 1,
-                    music_directory: None,
-                    tracks: BTreeMap::new(),
-                    playlists: BTreeMap::new(),
-                    session: PlaybackSessionV1::default(),
-                },
-            )?,
-        })
+        let path = path.into();
+        let store = AtomicJsonStore::open(
+            &path,
+            LibraryRepositoryState {
+                schema_version: 1,
+                music_directory: None,
+                tracks: BTreeMap::new(),
+                playlists: BTreeMap::new(),
+                session: PlaybackSessionV1::default(),
+            },
+        )?;
+        // NFR-014/API-007：拒绝更新版本写入的状态（降级保护），保留原文件。
+        crate::storage::reject_future_schema_version(store.snapshot().schema_version, 1, &path)?;
+        Ok(Self { store })
     }
 
     pub fn import_local(
@@ -659,6 +661,68 @@ mod tests {
             updated_at: 1,
             publisher_signature: Some("signature".into()),
         }
+    }
+
+    #[test]
+    fn future_schema_version_is_rejected_without_overwriting() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        // 更新版本写入的状态（999）——降级打开必须拒绝且保留原文件。
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 999,
+                "music_directory": null,
+                "tracks": {},
+                "playlists": {},
+                "session": {
+                    "current_track_id": null,
+                    "queue": [],
+                    "position_seconds": 0.0,
+                    "selected_audio_path": null,
+                    "volume": 1.0,
+                    "muted": false,
+                    "auto_play": false
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let result = LibraryService::open(&path);
+        assert!(result.is_err());
+        let error = result.err().unwrap().to_string();
+        assert!(error.contains("downgrade"), "{error}");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("999"), "original file must be preserved");
+    }
+
+    #[test]
+    fn older_schema_opens_with_forward_compatible_defaults() {
+        // 旧版本状态（完整 v1 形态）照常打开。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.json");
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 1,
+                "music_directory": null,
+                "tracks": {},
+                "playlists": {},
+                "session": {
+                    "current_track_id": null,
+                    "queue": [],
+                    "position_seconds": 0.0,
+                    "selected_audio_path": null,
+                    "volume": 1.0,
+                    "muted": false,
+                    "auto_play": false
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let service = LibraryService::open(&path).unwrap();
+        assert!(service.tracks().is_empty());
     }
 
     #[test]

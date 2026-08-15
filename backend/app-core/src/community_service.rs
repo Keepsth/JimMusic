@@ -210,25 +210,31 @@ pub struct CommunitySourceService {
 
 impl CommunitySourceService {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, CommunityError> {
-        Ok(Self {
-            store: AtomicJsonStore::open(
-                path,
-                CommunityRepositoryState {
-                    schema_version: SCHEMA_V1,
-                    sources: BTreeMap::new(),
-                    catalog_feeds: BTreeMap::new(),
-                    policy_feeds: BTreeMap::new(),
-                    local_blocks: BTreeMap::new(),
-                    maintainer_key_feeds: BTreeMap::new(),
-                    moderation_reports: BTreeMap::new(),
-                    removed_bootstrap_sources: BTreeSet::new(),
-                    followed_publishers: BTreeMap::new(),
-                    local_overrides: BTreeMap::new(),
-                    refresh_queue: BTreeMap::new(),
-                    feed_limits: FeedLimits::default(),
-                },
-            )?,
-        })
+        let path = path.into();
+        let store = AtomicJsonStore::open(
+            &path,
+            CommunityRepositoryState {
+                schema_version: SCHEMA_V1,
+                sources: BTreeMap::new(),
+                catalog_feeds: BTreeMap::new(),
+                policy_feeds: BTreeMap::new(),
+                local_blocks: BTreeMap::new(),
+                maintainer_key_feeds: BTreeMap::new(),
+                moderation_reports: BTreeMap::new(),
+                removed_bootstrap_sources: BTreeSet::new(),
+                followed_publishers: BTreeMap::new(),
+                local_overrides: BTreeMap::new(),
+                refresh_queue: BTreeMap::new(),
+                feed_limits: FeedLimits::default(),
+            },
+        )?;
+        // NFR-014/API-007：拒绝更新版本写入的状态（降级保护），保留原文件。
+        crate::storage::reject_future_schema_version(
+            store.snapshot().schema_version,
+            SCHEMA_V1,
+            &path,
+        )?;
+        Ok(Self { store })
     }
 
     pub fn add_source(

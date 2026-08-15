@@ -48,8 +48,9 @@ pub struct ReliabilityService {
 
 impl ReliabilityService {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, StorageError> {
+        let path = path.into();
         let store = AtomicJsonStore::open(
-            path,
+            &path,
             ReliabilityState {
                 schema_version: 1,
                 total_sessions: 0,
@@ -59,6 +60,8 @@ impl ReliabilityService {
                 last_clean_shutdown_at: None,
             },
         )?;
+        // NFR-014/API-007：拒绝更新版本写入的状态（降级保护），保留原文件。
+        crate::storage::reject_future_schema_version(store.snapshot().schema_version, 1, &path)?;
         let session_id = new_session_id()?;
         store.transact(|state| {
             if state.active_session.take().is_some() {

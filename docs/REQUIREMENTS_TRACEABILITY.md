@@ -142,8 +142,8 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | API-003 | 本机通过 | 所有 HTTP mutation 强制 Idempotency-Key/request_id，指纹冲突和持久 replay；API 测试 | 旧 legacy 路由只返回 410，不迁移副作用 |
 | API-004 | 本机通过 | 稳定错误信封与播放失败模型；Flutter 统一本地化映射（`apiErrorText`）：unsupported/not_found/conflict/payload_too_large/幂等键/网络暂停码/401 → 本地化文案 + 重试建议 + 恢复提示，控制台横幅与传输错误行统一消费；5 项测试 | 跨语言与无障碍复核待验收 |
 | API-005 | 本机通过 | 单调 sequence SSE、after 检测、snapshot.required 与快照端点；Flutter 已改为消费 `/v1/events`：sequence 缺口与 snapshot.required 触发整体重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询；解析器/真实 HTTP SSE/Provider 测试（`control_api_sse_test.dart`，13 项） | Web fetch 流式 SSE 路径与七端断线重连待实机/浏览器验收 |
-| API-006 | 部分实现 | 默认回环、启动必需 bearer token、常量时间校验；Flutter 拒绝非 HTTPS 远程 | 服务端 TLS/CORS/远程开启审计未完整实现 |
-| API-007 | 部分实现 | `docs/API_MIGRATION.md`、v1 路径、状态 schema、回滚原则 | 数据库升级/降级测试矩阵不完整 |
+| API-006 | 本机通过 | 默认回环、启动必需 bearer token、常量时间校验；Flutter 拒绝非 HTTPS 远程；CORS 层允许浏览器客户端跨源访问（认证仍由 Bearer token 强制，放宽 CORS 不削弱认证）；预检测试 1 项 | 服务端 TLS 终结与远程开启（受控反向代理）审计待发布环境 |
+| API-007 | 本机通过 | `docs/API_MIGRATION.md`、v1 路径、状态 schema、回滚原则；状态存储降级保护：transfers/library/publications/community/reliability 打开时拒绝未来 schema_version（保留原文件），旧版本按 serde 默认前向兼容；升级/降级测试 2 项 | 全部存储的完整矩阵与七端迁移待验收 |
 | SEC-001 | 部分实现 | 发布者 seed 仅存在于加密 bundle；状态文件 0600；明文搜索测试 | 未使用系统 Keychain/Keystore，节点 key 为 0600 文件 |
 | SEC-002 | 本机通过 | Argon2id + XChaCha20-Poly1305，错误口令/篡改/roundtrip 测试 | KDF 参数迁移测试待补 |
 | SEC-003 | 本机通过 | v1 插件签名强制，错误/缺失签名拒绝；测试 | legacy API 仍保留只读/410 兼容壳 |
@@ -174,7 +174,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | NFR-011 | 部分实现 | Flutter Material/SelectableText/标准控件 | 未做键盘、读屏、200% 缩放和对比度审计 |
 | NFR-012 | 本机通过 | 结构化错误/事件含子系统、操作和 request_id；tracing；全链路关联 ID：每个 HTTP 请求一个 `v1_request` span（method/path/request_id，request_id 取自 Idempotency-Key 且长度受限，不读取 Authorization 等秘密头）；提取/脱敏测试 2 项 | 发布构建日志采样与长期审计待验收 |
 | NFR-013 | 待外证 | 曲库/歌单/插件/本地 CAS 均为本地原子状态 | 七端离线场景未跑 |
-| NFR-014 | 部分实现 | Schema version、原子状态、API migration 文档 | 自动向前迁移与降级恢复测试不完整 |
+| NFR-014 | 本机通过 | Schema version、原子状态、API migration 文档；向前兼容（旧状态 + serde 默认）与降级拒绝（未来版本报错并保留原文件）落地到五个核心存储并有测试 | 每存储全矩阵与实机升级演练待验收 |
 | REL-001 | 本机通过 | 本文逐项映射 ID、代码、测试、平台缺口 | 发布后需补实际构建产物链接 |
 | REL-002 | 待外证 | release workflow 要求七个物理 runner 对同一 commit 提交全部适用 P0，`exemptions` 必须为空，聚合校验后方可发布 | 受控七端 runner 尚未执行本候选版本 |
 | REL-003 | 待外证 | CI 生成七端制品、源码、SHA256、SPDX SBOM、provenance | 必须在受控 tag run 中实际产生并验证 |

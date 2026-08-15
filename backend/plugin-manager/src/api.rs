@@ -64,6 +64,14 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
+    // API-006：浏览器客户端（Flutter Web 从任意本地端口）跨源访问控制面
+    // 需要 CORS。控制面默认只绑定回环且所有路由都要求 Bearer token，
+    // 因此放宽 CORS 不会绕过认证；远程绑定仍由 JIMMUSIC_BIND_ADDR 显式开启。
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
+
     public
         .merge(protected)
         .nest("/v1", v1)
@@ -72,6 +80,7 @@ pub fn build_router(state: AppState) -> Router {
             // method/path/request_id；脱敏：不记录 Authorization 等秘密头。
             tower_http::trace::TraceLayer::new_for_http().make_span_with(v1_request_span),
         )
+        .layer(cors)
         .with_state(state)
 }
 
@@ -377,6 +386,51 @@ mod tests {
         let too_long = "x".repeat(201);
         headers.insert("idempotency-key", too_long.parse().unwrap());
         assert_eq!(correlation_request_id(&headers), None);
+    }
+
+    #[tokio::test]
+    async fn cors_preflight_allows_browser_clients() {
+        let (state, _dir) = test_state();
+        let app = build_router(state.clone());
+
+        // 预检：浏览器跨源访问控制面的 OPTIONS 必须成功并带 CORS 头。
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("OPTIONS")
+                    .uri("/v1/health")
+                    .header("origin", "http://localhost:51234")
+                    .header("access-control-request-method", "GET")
+                    .header(
+                        "access-control-request-headers",
+                        "authorization, idempotency-key",
+                    )
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response
+            .headers()
+            .contains_key("access-control-allow-origin"));
+
+        // 普通跨源 GET 同样携带 CORS 头（认证仍由 Bearer token 强制）。
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/v1/health")
+                    .header("origin", "http://localhost:51234")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response
+            .headers()
+            .contains_key("access-control-allow-origin"));
     }
 
     #[test]
