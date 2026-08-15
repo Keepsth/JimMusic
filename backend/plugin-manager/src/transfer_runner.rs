@@ -19,13 +19,18 @@ use crate::state::AppState;
 pub fn spawn(state: Arc<AppState>, task_id: String) {
     tokio::spawn(async move {
         if let Err(error) = run(state.clone(), &task_id).await {
-            tracing::warn!(task_id, error = %error, "transfer task failed");
-            if state
-                .transfers
-                .get(&task_id)
-                .is_some_and(|task| task.state != TransferState::Cancelled)
-            {
+            let still_owned = state.transfers.get(&task_id).is_some_and(|task| {
+                matches!(
+                    task.state,
+                    TransferState::Resolving | TransferState::Transferring
+                )
+            });
+            if still_owned {
+                tracing::warn!(task_id, error = %error, "transfer task failed");
                 let _ = fail(&state, &task_id, "transfer_failed", error, true);
+            } else {
+                // 状态已被控制面改变（重新排队/暂停/取消）：正常中止，不误报失败。
+                tracing::info!(task_id, %error, "transfer run aborted after state change");
             }
         }
     });
@@ -56,11 +61,20 @@ async fn run(state: Arc<AppState>, task_id: &str) -> Result<(), String> {
             tokio::time::sleep(Duration::from_millis(20)).await;
             continue;
         };
-        if task.network_policy.wifi_only || task.network_policy.cellular_limit_bytes.is_some() {
-            return Err(
-                "this build has no platform network-class adapter; Wi-Fi/cellular policy cannot be proven"
-                    .into(),
+        // NOD-006：任务排队执行前再次确认当前网络类别允许该策略；
+        // 受限时由控制面暂停（结构化原因），本 runner 正常退出。
+        let config = state.node.config();
+        if state.transfers.network_restricted(
+            &task.network_policy,
+            config.network_class.as_deref(),
+            config.metered_network_allowed,
+        ) {
+            let _ = state.transfers.apply_network_class(
+                config.network_class.as_deref(),
+                config.metered_network_allowed,
+                app_core::transfer_service::now(),
             );
+            return Ok(());
         }
         state
             .transfers
@@ -277,6 +291,11 @@ async fn wait_if_paused(state: &AppState, task_id: &str) -> Result<(), String> {
         match task.state {
             TransferState::Paused => tokio::time::sleep(Duration::from_millis(100)).await,
             TransferState::Cancelled => return Err("transfer was cancelled".into()),
+            TransferState::Queued => {
+                // 控制面重新排队（例如网络恢复后的自动恢复）：新 runner 接管，
+                // 本 runner 中止且不把任务标记为失败。
+                return Err("transfer was re-queued by the scheduler".into());
+            }
             _ => return Ok(()),
         }
     }

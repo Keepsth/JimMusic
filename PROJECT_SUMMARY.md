@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 225 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 229 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，37 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流与
@@ -77,6 +77,10 @@
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；
+- 网络类别策略（NOD-006）：网络类别声明（Wi-Fi/蜂窝/有线/未知）+ 计量开关驱动传输的
+  自动暂停与恢复（只恢复网络暂停任务，用户手动暂停不打扰），结构化原因与事件推送；
+  上传限速因内嵌 Bitswap 无带宽节流而按 PROD-004 显式拒绝（`unsupported` + reason），
+  UI 明示暂不支持；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
   重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询，不再依赖 5s 定时轮询；
 - 社区源紧凑快照端点支持 gzip 传输压缩、SHA-256/字节数完整性头与 32 MiB 未压缩上限；

@@ -404,13 +404,11 @@ class _NodeTab extends StatelessWidget {
     final concurrency = TextEditingController(
       text: '${config['max_concurrent_transfers']}',
     );
-    final upload = TextEditingController(
-      text: '${config['upload_limit_bytes_per_second'] ?? ''}',
-    );
     final download = TextEditingController(
       text: '${config['download_limit_bytes_per_second'] ?? ''}',
     );
     var metered = config['metered_network_allowed'] == true;
+    var networkClass = (config['network_class'] as String?) ?? 'unknown';
     String? validationError;
     final accepted = await showDialog<bool>(
       context: context,
@@ -440,11 +438,13 @@ class _NodeTab extends StatelessWidget {
                       labelText: '最大并发传输（1–64）',
                     ),
                   ),
-                  TextField(
-                    controller: upload,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: '上传限速 bytes/s（留空不限）',
+                  const ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.info_outline),
+                    title: Text('上传限速暂不支持'),
+                    subtitle: Text(
+                      '内嵌 Bitswap 服务没有带宽节流能力，设置会被结构化拒绝'
+                      '（unsupported）。上传目前不限速。',
                     ),
                   ),
                   TextField(
@@ -458,6 +458,19 @@ class _NodeTab extends StatelessWidget {
                     title: const Text('允许计量网络'),
                     value: metered,
                     onChanged: (value) => setState(() => metered = value),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: networkClass,
+                    decoration: const InputDecoration(labelText: '当前网络类别'),
+                    items: const [
+                      DropdownMenuItem(value: 'wifi', child: Text('Wi-Fi')),
+                      DropdownMenuItem(value: 'cellular', child: Text('蜂窝网络')),
+                      DropdownMenuItem(value: 'ethernet', child: Text('有线网络')),
+                      DropdownMenuItem(value: 'unknown', child: Text('未声明')),
+                    ],
+                    onChanged: (value) => setState(
+                      () => networkClass = value ?? 'unknown',
+                    ),
                   ),
                   if (validationError != null)
                     Text(
@@ -480,9 +493,6 @@ class _NodeTab extends StatelessWidget {
                 final storageValue = int.tryParse(storage.text);
                 final cacheValue = int.tryParse(cache.text);
                 final concurrencyValue = int.tryParse(concurrency.text);
-                final uploadValue = upload.text.trim().isEmpty
-                    ? 1
-                    : int.tryParse(upload.text);
                 final downloadValue = download.text.trim().isEmpty
                     ? 1
                     : int.tryParse(download.text);
@@ -494,8 +504,6 @@ class _NodeTab extends StatelessWidget {
                     concurrencyValue == null ||
                     concurrencyValue < 1 ||
                     concurrencyValue > 64 ||
-                    uploadValue == null ||
-                    uploadValue <= 0 ||
                     downloadValue == null ||
                     downloadValue <= 0) {
                   setState(() => validationError = '请检查仓库、缓存和并发范围');
@@ -514,13 +522,12 @@ class _NodeTab extends StatelessWidget {
       'storage_limit_bytes': int.parse(storage.text),
       'cache_limit_bytes': int.parse(cache.text),
       'max_concurrent_transfers': int.parse(concurrency.text),
-      'upload_limit_bytes_per_second': upload.text.trim().isEmpty
-          ? null
-          : int.parse(upload.text),
+      'upload_limit_bytes_per_second': null,
       'download_limit_bytes_per_second': download.text.trim().isEmpty
           ? null
           : int.parse(download.text),
       'metered_network_allowed': metered,
+      'network_class': networkClass,
     });
   }
 }

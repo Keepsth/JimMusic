@@ -28,6 +28,10 @@ pub struct NodeConfig {
     pub upload_limit_bytes_per_second: Option<u64>,
     pub download_limit_bytes_per_second: Option<u64>,
     pub metered_network_allowed: bool,
+    /// 当前网络类别声明：`wifi` / `cellular` / `ethernet` / `unknown`；
+    /// `None` 表示尚未声明（视为非计量网络，NOD-006）。
+    #[serde(default)]
+    pub network_class: Option<String>,
 }
 
 impl Default for NodeConfig {
@@ -39,9 +43,13 @@ impl Default for NodeConfig {
             upload_limit_bytes_per_second: None,
             download_limit_bytes_per_second: None,
             metered_network_allowed: false,
+            network_class: None,
         }
     }
 }
+
+/// 允许的网络类别值。
+pub const NETWORK_CLASSES: [&str; 4] = ["wifi", "cellular", "ethernet", "unknown"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ObjectRecord {
@@ -513,6 +521,13 @@ fn validate_config(config: &NodeConfig) -> Result<(), NodeError> {
         return Err(NodeError::InvalidConfig(
             "bandwidth limits must be greater than zero when configured".into(),
         ));
+    }
+    if let Some(class) = &config.network_class {
+        if !NETWORK_CLASSES.contains(&class.as_str()) {
+            return Err(NodeError::InvalidConfig(format!(
+                "network_class must be one of {NETWORK_CLASSES:?} or null"
+            )));
+        }
     }
     Ok(())
 }

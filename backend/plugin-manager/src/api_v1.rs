@@ -177,6 +177,25 @@ impl ApiError {
         )
     }
 
+    /// 显式不支持的能力（PROD-004）：错误信封携带结构化 unsupported_reason。
+    fn unsupported(
+        subsystem: &str,
+        operation: &str,
+        error: impl ToString,
+        reason: impl Into<String>,
+    ) -> Self {
+        let mut envelope = Self::new(
+            StatusCode::BAD_REQUEST,
+            "unsupported",
+            subsystem,
+            operation,
+            error,
+            false,
+        );
+        envelope.body.unsupported_reason = Some(reason.into());
+        envelope
+    }
+
     fn new(
         status: StatusCode,
         code: &str,
@@ -529,12 +548,36 @@ async fn set_node_config(
     State(state): State<Arc<AppState>>,
     Json(config): Json<NodeConfig>,
 ) -> ApiResult<NodeConfig> {
+    // 上传限速目前无法在内嵌 Bitswap 服务中强制执行（rust-ipfs 无带宽
+    // 节流），按 PROD-004 显式拒绝而不是静默接受后不生效。
+    if config.upload_limit_bytes_per_second.is_some() {
+        return Err(ApiError::unsupported(
+            "node",
+            "set_config",
+            "upload rate limiting is not supported",
+            "the embedded Bitswap server (rust-ipfs 0.16) has no bandwidth ".to_string()
+                + "throttle; uploads are served unthrottled. Leave the limit "
+                + "unset instead of expecting silent enforcement.",
+        ));
+    }
     let concurrency = config.max_concurrent_transfers as usize;
     state
         .node
         .set_config(config.clone())
         .map_err(|error| ApiError::bad_request("node", "set_config", error))?;
     *state.transfer_slots.write().await = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    // NOD-006：网络类别变化 → 暂停/恢复受策略约束的传输，并重新调度恢复的任务。
+    let effect = state
+        .transfers
+        .apply_network_class(
+            config.network_class.as_deref(),
+            config.metered_network_allowed,
+            now(),
+        )
+        .map_err(|error| ApiError::bad_request("transfer", "network_policy", error))?;
+    for task in effect.resumed {
+        crate::transfer_runner::spawn(state.clone(), task.task_id);
+    }
     state.events.publish(Event::NodeChanged {
         state: "configured".into(),
     });
@@ -623,10 +666,33 @@ async fn create_transfer(
             request.priority,
         )
         .map_err(|error| ApiError::bad_request("transfer", "create", error))?;
+    // NOD-006：新任务也要服从当前网络类别策略（仅 Wi-Fi / 计量开关）。
+    apply_current_network_class(&state).await?;
+    let task = state
+        .transfers
+        .get(&task.task_id)
+        .expect("task created above");
     if task.state == jimmusic_protocol::TransferState::Queued {
         crate::transfer_runner::spawn(state.clone(), task.task_id.clone());
     }
     Ok(Json(task))
+}
+
+/// 按当前节点配置应用网络类别策略并重新调度被自动恢复的任务（NOD-006）。
+async fn apply_current_network_class(state: &Arc<AppState>) -> Result<(), ApiError> {
+    let config = state.node.config();
+    let effect = state
+        .transfers
+        .apply_network_class(
+            config.network_class.as_deref(),
+            config.metered_network_allowed,
+            now(),
+        )
+        .map_err(|error| ApiError::bad_request("transfer", "network_policy", error))?;
+    for task in effect.resumed {
+        crate::transfer_runner::spawn(state.clone(), task.task_id);
+    }
+    Ok(())
 }
 
 async fn list_transfers(
@@ -659,11 +725,16 @@ async fn resume_transfer(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<jimmusic_protocol::TransferTaskV1> {
-    let task = state
+    state
         .transfers
         .resume(&id)
         .map_err(|error| ApiError::conflict("transfer", "resume", error))?;
-    crate::transfer_runner::spawn(state, task.task_id.clone());
+    // 手动恢复同样服从网络策略：受限时会被立即重新暂停并给出结构化原因。
+    apply_current_network_class(&state).await?;
+    let task = state.transfers.get(&id).expect("task resumed above");
+    if task.state == jimmusic_protocol::TransferState::Queued {
+        crate::transfer_runner::spawn(state, task.task_id.clone());
+    }
     Ok(Json(task))
 }
 
@@ -680,11 +751,15 @@ async fn retry_transfer(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> ApiResult<jimmusic_protocol::TransferTaskV1> {
-    let task = state
+    state
         .transfers
         .retry(&id)
         .map_err(|error| ApiError::conflict("transfer", "retry", error))?;
-    crate::transfer_runner::spawn(state, task.task_id.clone());
+    apply_current_network_class(&state).await?;
+    let task = state.transfers.get(&id).expect("task retried above");
+    if task.state == jimmusic_protocol::TransferState::Queued {
+        crate::transfer_runner::spawn(state, task.task_id.clone());
+    }
     Ok(Json(task))
 }
 
@@ -3274,6 +3349,90 @@ mod tests {
         assert!(body.contains("encrypted_envelope"));
         assert!(!body.contains("private detail"));
         assert!(!body.contains("bafy-evidence"));
+    }
+
+    fn node_config_body(network_class: Option<&str>) -> serde_json::Value {
+        serde_json::json!({
+            "storage_limit_bytes": 20 * 1024 * 1024 * 1024u64,
+            "cache_limit_bytes": 2 * 1024 * 1024 * 1024u64,
+            "max_concurrent_transfers": 3,
+            "upload_limit_bytes_per_second": null,
+            "download_limit_bytes_per_second": null,
+            "metered_network_allowed": false,
+            "network_class": network_class,
+        })
+    }
+
+    #[tokio::test]
+    async fn network_class_pauses_wifi_only_transfers_and_restores_them() {
+        let (state, _dir) = state();
+        // 先声明蜂窝网络：wifi_only 任务创建后应处于网络策略暂停，不进入队列执行。
+        let (status, config) = call(
+            routes(),
+            state.clone(),
+            "PUT",
+            "/node/config",
+            node_config_body(Some("cellular")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{config}");
+        assert_eq!(config["network_class"], "cellular");
+
+        let (status, task) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/transfers",
+            serde_json::json!({
+                "request_id": "req-wifi-only",
+                "kind": "fetch",
+                "target_cid": "bafy-wifi-target",
+                "network_policy": {"wifi_only": true, "max_concurrency": 2}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{task}");
+        assert_eq!(task["state"], "paused");
+        assert_eq!(task["paused_by_network"], true);
+        assert_eq!(task["error"]["code"], "paused_wifi_only");
+        assert_eq!(task["error"]["subsystem"], "transfer");
+
+        // 回到 Wi-Fi：任务自动恢复排队（不再是网络暂停）。
+        let (status, _) = call(
+            routes(),
+            state.clone(),
+            "PUT",
+            "/node/config",
+            node_config_body(Some("wifi")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, tasks) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/transfers",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let resumed = &tasks.as_array().unwrap()[0];
+        assert_eq!(resumed["paused_by_network"], false);
+        assert_ne!(resumed["state"], "paused");
+    }
+
+    #[tokio::test]
+    async fn upload_rate_limit_is_explicitly_rejected_as_unsupported() {
+        let (state, _dir) = state();
+        let mut body = node_config_body(None);
+        body["upload_limit_bytes_per_second"] = serde_json::json!(1024);
+        let (status, response) = call(routes(), state, "PUT", "/node/config", body).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(response["code"], "unsupported");
+        assert!(response["unsupported_reason"]
+            .as_str()
+            .unwrap()
+            .contains("Bitswap"));
     }
 
     #[tokio::test]

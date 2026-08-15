@@ -1257,6 +1257,10 @@ pub struct TransferTaskV1 {
     pub network_policy: NetworkPolicyV1,
     #[serde(default)]
     pub destination: Option<String>,
+    /// 由网络类别策略（仅 Wi-Fi / 按流量计费）自动暂停；回到允许的
+    /// 网络类别时只自动恢复这类暂停，不打扰用户手动暂停的任务。
+    #[serde(default)]
+    pub paused_by_network: bool,
     #[serde(default)]
     pub error: Option<ErrorEnvelopeV1>,
     pub created_at: i64,

@@ -1068,11 +1068,11 @@ HTTP 控制面统一使用 /v1，默认仅绑定回环地址并受 Bearer token 
 | 子系统         | 当前状态                                                                 | 与 2.0 的主要差距                                                  |
 | -------------- | ------------------------------------------------------------------------ | ------------------------------------------------------------------ |
 | Flutter 播放器 | 已移除演示曲目/模拟进度；本地曲库、歌单和真实 Bridge/just_audio 状态可用 | Flutter 与后端 Manifest/社区曲库仍是两套状态；缺七端实机闭环       |
-| 播放引擎       | 增量解码、有界 PCM、类型化 DAG、格式转换、延迟补偿、原子切换和统计       | 无 gapless/crossfade；DSP failure policy 和节点状态迁移未完整执行  |
+| 播放引擎       | 增量解码、有界 PCM、类型化 DAG、格式转换、延迟补偿、原子切换和统计；双时间线 gapless/crossfade | DSP 节点崩溃/超时注入链路、动态延迟与节点状态迁移未完整执行；七端音频语料待验收 |
 | 音频输出       | null、CPAL system output 已接桌面 FFI；Web Audio 有 ABI/Worklet 参考实现 | Web Audio 未接 Flutter PCM；无独占、ASIO、CoreAudio Hog、DSD 证据  |
-| 插件 ABI       | Audio ABI v2、Manifest、权限/依赖/配置/制品 DTO 与 legacy 输出适配存在   | 没有真正 WASM runtime/capability 沙箱和完整声明式 ControlPanel     |
+| 插件 ABI       | Audio ABI v2、Manifest、权限/依赖/配置/制品 DTO、legacy 输出适配与 Wasmtime 无 WASI/capability 沙箱 | Web/iOS/HarmonyOS 插件执行载体与完整声明式 ControlPanel 渲染未闭环 |
 | 插件管理器     | 强制签名/CID/摘要、预检、事务安装、持久状态、启停、回滚、隔离、安全模式  | 远端目录与撤销 Feed、运行时权限强制和独立进程隔离不完整            |
-| 节点/IPFS      | 内置本地 verified CAS、稳定 PeerId、Pin/配额/诊断和持久传输任务          | 网络获取仍依赖 Kubo HTTP 网关；没有 Helia/libp2p/UnixFS/内容路由   |
+| 节点/IPFS      | rust-ipfs UnixFS/Bitswap/Kademlia/mDNS/TCP/WS/QUIC、Pin/配额/稳定 PeerId 与 Web Helia 直连互操作；网络类别策略暂停/恢复传输 | 真实浏览器中继、Kubo 额外互操作与移动端网络闭环待外证；上传限速显式不支持（PROD-004）、自动复刻未实现 |
 | 音乐分发       | Manifest/rendition、签名 Feed、原子下载、持久优先级调度与任务恢复        | 缺另一节点从 Feed 解析到播放的 UI 闭环、外部 Pin service 和完整发布向导；边下边播已落地（传输 part 流端点 + 播放器接入），七端实测待补 |
 | 社区发现       | 双 Feed、可禁用签名启动源、URI/CID/IPNS 导入、换钥/撤销与加密举报        | 启动源尚无远端 Feed；缺相机扫码；Feed 快照/压缩已落地（紧凑快照 + gzip + 摘要 + 上限），远端实测待补                   |
 | 音乐目录       | 后端持久曲库/扫描/缺失标记/歌单/会话和 Flutter 本地曲库均可用            | 两端尚未统一；无目录监控、迁移和 Web 持久目录闭环                  |

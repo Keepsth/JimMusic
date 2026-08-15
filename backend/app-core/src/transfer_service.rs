@@ -22,6 +22,41 @@ struct TransferRepositoryState {
     idempotency: BTreeMap<String, String>,
 }
 
+/// 应用网络类别策略后的效果：被自动暂停与被自动恢复（重新排队）的任务。
+#[derive(Debug, Clone, Default)]
+pub struct NetworkClassEffect {
+    pub paused: Vec<TransferTaskV1>,
+    pub resumed: Vec<TransferTaskV1>,
+}
+
+/// 网络策略自动暂停的结构化原因（NOD-006）。
+fn network_pause_error(cellular: bool, wifi_only: bool, metered_allowed: bool) -> ErrorEnvelopeV1 {
+    let code = if wifi_only {
+        "paused_wifi_only"
+    } else {
+        "paused_metered_network"
+    };
+    let message = if cellular && wifi_only {
+        "current network is cellular but the task requires Wi-Fi".to_string()
+    } else if cellular && !metered_allowed {
+        "current network is cellular and metered-network use is not allowed".to_string()
+    } else {
+        "transfer paused by network policy".to_string()
+    };
+    ErrorEnvelopeV1 {
+        schema_version: SCHEMA_V1,
+        code: code.into(),
+        message,
+        subsystem: "transfer".into(),
+        operation: "network_policy".into(),
+        retryable: false,
+        unsupported_reason: None,
+        details: BTreeMap::new(),
+        request_id: None,
+        causes: Vec::new(),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error(transparent)]
@@ -141,6 +176,7 @@ impl TransferService {
             next_retry_at: None,
             network_policy: policy,
             destination,
+            paused_by_network: false,
             error: None,
             created_at: timestamp,
             updated_at: timestamp,
@@ -210,11 +246,14 @@ impl TransferService {
     }
 
     pub fn pause(&self, task_id: &str) -> Result<TransferTaskV1, TransferError> {
-        self.transition(task_id, TransferState::Paused)
+        self.transition(task_id, TransferState::Paused)?;
+        // 用户手动暂停：清除网络策略暂停标记，避免回到 Wi-Fi 时被自动恢复。
+        self.set_paused_by_network(task_id, false)
     }
 
     pub fn resume(&self, task_id: &str) -> Result<TransferTaskV1, TransferError> {
-        self.transition(task_id, TransferState::Queued)
+        self.transition(task_id, TransferState::Queued)?;
+        self.set_paused_by_network(task_id, false)
     }
 
     pub fn cancel(&self, task_id: &str) -> Result<TransferTaskV1, TransferError> {
@@ -238,11 +277,119 @@ impl TransferService {
             task.next_retry_at = None;
             task.error = None;
             task.speed_bytes_per_second = 0;
+            task.paused_by_network = false;
             task.updated_at = now();
             Ok(task.clone())
         })?;
         self.publish_task(&task);
         Ok(task)
+    }
+
+    fn set_paused_by_network(
+        &self,
+        task_id: &str,
+        value: bool,
+    ) -> Result<TransferTaskV1, TransferError> {
+        let task = self.store.transact(|state| {
+            let task = state
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| StorageError::Corrupt {
+                    path: PathBuf::from("transfers"),
+                    reason: format!("missing task `{task_id}`"),
+                })?;
+            task.paused_by_network = value;
+            task.updated_at = now();
+            Ok(task.clone())
+        })?;
+        self.publish_task(&task);
+        Ok(task)
+    }
+
+    /// 网络类别策略（NOD-006）：按当前网络类别与计量开关暂停/恢复任务。
+    ///
+    /// - `class == "cellular"` 且未允许计量网络：暂停所有进行中任务；
+    /// - `class == "cellular"`：`wifi_only` 任务无条件暂停（它们要求 Wi-Fi）；
+    /// - 回到允许的类别：只自动恢复 `paused_by_network` 的任务，用户手动
+    ///   暂停的任务保持暂停；
+    /// - 未知/未声明类别视为非计量网络（宽松），UI 应引导用户声明。
+    pub fn apply_network_class(
+        &self,
+        class: Option<&str>,
+        metered_allowed: bool,
+        timestamp: i64,
+    ) -> Result<NetworkClassEffect, TransferError> {
+        let cellular = class == Some("cellular");
+        let metered_restricted = cellular && !metered_allowed;
+        let tasks = self.list();
+        let mut paused = Vec::new();
+        let mut resumed = Vec::new();
+        for task in tasks {
+            if matches!(
+                task.state,
+                TransferState::Completed
+                    | TransferState::Cancelled
+                    | TransferState::IntegrityFailed
+            ) {
+                continue;
+            }
+            let restricted = metered_restricted || (cellular && task.network_policy.wifi_only);
+            if restricted {
+                if task.state == TransferState::Paused && task.paused_by_network {
+                    continue; // 已按网络策略暂停，保持
+                }
+                if task.state == TransferState::Paused {
+                    continue; // 用户手动暂停，不覆盖
+                }
+                let updated = self.store.transact(|state| {
+                    let stored = state.tasks.get_mut(&task.task_id).ok_or_else(|| {
+                        StorageError::Corrupt {
+                            path: PathBuf::from("transfers"),
+                            reason: format!("missing task `{}`", task.task_id),
+                        }
+                    })?;
+                    stored.state = TransferState::Paused;
+                    stored.paused_by_network = true;
+                    stored.error = Some(network_pause_error(
+                        cellular,
+                        task.network_policy.wifi_only,
+                        metered_allowed,
+                    ));
+                    stored.updated_at = timestamp;
+                    Ok(stored.clone())
+                })?;
+                self.publish_task(&updated);
+                paused.push(updated);
+            } else if task.paused_by_network && task.state == TransferState::Paused {
+                let updated = self.store.transact(|state| {
+                    let stored = state.tasks.get_mut(&task.task_id).ok_or_else(|| {
+                        StorageError::Corrupt {
+                            path: PathBuf::from("transfers"),
+                            reason: format!("missing task `{}`", task.task_id),
+                        }
+                    })?;
+                    stored.state = TransferState::Queued;
+                    stored.paused_by_network = false;
+                    stored.error = None;
+                    stored.updated_at = timestamp;
+                    Ok(stored.clone())
+                })?;
+                self.publish_task(&updated);
+                resumed.push(updated);
+            }
+        }
+        Ok(NetworkClassEffect { paused, resumed })
+    }
+
+    /// 按当前类别判定任务是否允许排队执行（供创建/恢复入口使用）。
+    pub fn network_restricted(
+        &self,
+        policy: &NetworkPolicyV1,
+        class: Option<&str>,
+        metered_allowed: bool,
+    ) -> bool {
+        let cellular = class == Some("cellular");
+        (cellular && !metered_allowed) || (cellular && policy.wifi_only)
     }
 
     pub fn mark_resolving(&self, task_id: &str) -> Result<TransferTaskV1, TransferError> {
@@ -539,7 +686,8 @@ fn task_id(request_id: &str, cid: &str, counter: u64) -> String {
     format!("tr_{}", &hex::encode(hasher.finalize())[..24])
 }
 
-fn now() -> i64 {
+/// 当前 Unix 秒（任务时间戳单位）。
+pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -576,6 +724,128 @@ mod tests {
         assert_eq!(first.task_id, second.task_id);
         drop(service);
         assert_eq!(TransferService::open(path).unwrap().list().len(), 1);
+    }
+
+    fn policy_wifi_only() -> NetworkPolicyV1 {
+        NetworkPolicyV1 {
+            wifi_only: true,
+            cellular_limit_bytes: None,
+            max_concurrency: 2,
+        }
+    }
+
+    #[test]
+    fn network_class_pauses_and_auto_resumes_only_network_pauses() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = TransferService::open(dir.path().join("transfers.json")).unwrap();
+        let wifi_task = service
+            .create(
+                "req-wifi",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"w"),
+                None,
+                policy_wifi_only(),
+            )
+            .unwrap();
+        let normal_task = service
+            .create(
+                "req-normal",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"n"),
+                None,
+                policy(),
+            )
+            .unwrap();
+
+        // 蜂窝网络 + 不允许计量：全部暂停，原因结构化。
+        let effect = service
+            .apply_network_class(Some("cellular"), false, 10)
+            .unwrap();
+        assert_eq!(effect.resumed.len(), 0);
+        assert_eq!(effect.paused.len(), 2);
+        for task in effect.paused {
+            assert!(task.paused_by_network);
+            let error = task.error.as_ref().unwrap();
+            assert_eq!(error.operation, "network_policy");
+            assert!(!error.retryable);
+        }
+        let wifi_paused = service.get(&wifi_task.task_id).unwrap();
+        assert_eq!(wifi_paused.error.unwrap().code, "paused_wifi_only");
+        let normal_paused = service.get(&normal_task.task_id).unwrap();
+        assert_eq!(normal_paused.error.unwrap().code, "paused_metered_network");
+
+        // 回到 Wi-Fi：仅网络暂停的任务自动恢复。
+        let effect = service
+            .apply_network_class(Some("wifi"), false, 20)
+            .unwrap();
+        assert_eq!(effect.paused.len(), 0);
+        assert_eq!(effect.resumed.len(), 2);
+        for task in effect.resumed {
+            assert_eq!(task.state, TransferState::Queued);
+            assert!(!task.paused_by_network);
+            assert!(task.error.is_none());
+        }
+
+        // 用户手动暂停不受自动恢复影响。
+        service.pause(&normal_task.task_id).unwrap();
+        service
+            .apply_network_class(Some("cellular"), false, 30)
+            .unwrap();
+        let user_paused = service.get(&normal_task.task_id).unwrap();
+        assert_eq!(user_paused.state, TransferState::Paused);
+        assert!(!user_paused.paused_by_network);
+        let effect = service
+            .apply_network_class(Some("wifi"), false, 40)
+            .unwrap();
+        assert_eq!(effect.resumed.len(), 1); // 只有网络暂停的 wifi_task 恢复
+        assert!(effect
+            .resumed
+            .iter()
+            .all(|task| task.task_id == wifi_task.task_id));
+        assert_eq!(
+            service.get(&normal_task.task_id).unwrap().state,
+            TransferState::Paused
+        );
+    }
+
+    #[test]
+    fn network_class_cellular_with_metering_allowed_keeps_non_wifi_tasks() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = TransferService::open(dir.path().join("transfers.json")).unwrap();
+        let wifi_task = service
+            .create(
+                "req-wifi",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"w"),
+                None,
+                policy_wifi_only(),
+            )
+            .unwrap();
+        let normal_task = service
+            .create(
+                "req-normal",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"n"),
+                None,
+                policy(),
+            )
+            .unwrap();
+
+        // 蜂窝 + 允许计量：仅 wifi_only 任务暂停。
+        let effect = service
+            .apply_network_class(Some("cellular"), true, 10)
+            .unwrap();
+        assert_eq!(effect.paused.len(), 1);
+        assert_eq!(effect.paused[0].task_id, wifi_task.task_id);
+        assert_eq!(
+            service.get(&normal_task.task_id).unwrap().state,
+            TransferState::Queued
+        );
+
+        // 未声明类别视为非计量：网络暂停的任务恢复。
+        let effect = service.apply_network_class(None, false, 20).unwrap();
+        assert_eq!(effect.resumed.len(), 1);
+        assert_eq!(effect.resumed[0].task_id, wifi_task.task_id);
     }
 
     #[test]
