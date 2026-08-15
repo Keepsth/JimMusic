@@ -16,12 +16,29 @@ class _FakeControlApi extends ControlApi {
   final StreamController<SseEvent> eventsController;
   final List<String> requests = [];
   final List<int?> afterValues = [];
+  final List<String> mutations = [];
   final Map<String, dynamic> responses = {'/health': {'status': 'ok'}};
 
   @override
   Future<dynamic> get(String path) async {
     requests.add(path);
     return responses[path] ?? const <dynamic>[];
+  }
+
+  @override
+  Future<dynamic> post(
+    String path, [
+    Object? body,
+    Map<String, String>? headers,
+  ]) async {
+    mutations.add('POST $path $body');
+    return {};
+  }
+
+  @override
+  Future<dynamic> delete(String path) async {
+    mutations.add('DELETE $path');
+    return {};
   }
 
   @override
@@ -243,6 +260,25 @@ void main() {
       );
       await _pumpEventLoop();
       expect(fake.requests, contains('/health'));
+    });
+
+    test('关注与取消关注发布者走对应 mutation 端点', () async {
+      await provider.refresh();
+      await provider.followPublisher('bafy-id', 'jm:publisher', 'Name');
+      expect(
+        fake.mutations,
+        contains(
+          allOf(
+            contains('POST /community-sources/follows'),
+            contains('bafy-id'),
+          ),
+        ),
+      );
+      await provider.unfollowPublisher('bafy-id');
+      expect(
+        fake.mutations,
+        contains('DELETE /community-sources/follows/bafy-id'),
+      );
     });
 
     test('流断开后带 after 重连', () async {

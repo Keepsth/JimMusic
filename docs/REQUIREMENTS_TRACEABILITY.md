@@ -111,7 +111,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | DST-012 | 本机通过 | Public Manifest 缺许可证/权利声明时发布失败；单测 | 发布向导仍是高级 JSON 输入 |
 | COM-001 | 本机通过 | CommunitySourceManifest、维护者签名、Catalog/Policy 独立开关与 UI | 启动源当前为空 Feed |
 | COM-002 | 本机通过 | 双 Feed 序列/previous CID/时间/签名/到期校验；负向测试 | 大型远端 Feed 跨版本回放待验收 |
-| COM-003 | 部分实现 | 已启用 Catalog 与本地索引可合并搜索，精确 CID API 存在 | 直接关注发布者模型不完整 |
+| COM-003 | 本机通过 | 已启用 Catalog 与本地索引可合并搜索，精确 CID API 存在；直接关注发布者：`POST/GET/DELETE /v1/community-sources/follows` 持久化关注（上限 4096），关注后把目录中该发布者的 Music Manifest 解析（本地 CAS/P2P、签名校验、单次 ≤128）导入媒体库，禁用/删除全部 Catalog 后仍可搜索播放（关注记录与曲库保留，取消关注不删用户数据）；社区页新增关注发布者 UI；API 测试 1 项 + Flutter 测试 1 项 | 关注后的增量刷新与七端交互待验收 |
 | COM-004 | 本机通过 | 同 Manifest CID 去重，社区 annotation 与签名 Manifest 分层 | 跨源大数据集重建待验收 |
 | COM-005 | 部分实现 | 本地索引支持目标、类别、标签、来源查询 | 标题/艺人/专辑/发布者的统一全文索引不完整 |
 | COM-006 | 部分实现 | warn/demote/hide/block/revoke 决策、范围/到期、policy API | 详情与精确打开入口尚未统一应用策略 |

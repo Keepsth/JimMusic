@@ -1142,6 +1142,13 @@ class _CommunityTab extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           FloatingActionButton.small(
+            heroTag: 'follow-publisher',
+            tooltip: '直接关注发布者（COM-003）',
+            onPressed: () => _follow(context),
+            child: const Icon(Icons.person_add_alt),
+          ),
+          const SizedBox(height: 10),
+          FloatingActionButton.small(
             heroTag: 'import-community-source',
             tooltip: '从 URI / CID / IPNS 导入（二维码使用同一 URI）',
             onPressed: () => _import(context),
@@ -1156,17 +1163,59 @@ class _CommunityTab extends StatelessWidget {
           ),
         ],
       ),
-      body:
-          control.communitySources.isEmpty && control.moderationReports.isEmpty
-          ? const Center(child: Text('暂无社区源或举报任务'))
+      body: control.communitySources.isEmpty &&
+              control.moderationReports.isEmpty &&
+              control.follows.isEmpty
+          ? const Center(child: Text('暂无社区源、关注或举报任务'))
           : ListView.builder(
               padding: const EdgeInsets.only(bottom: 88),
               itemCount:
+                  _followsBase(control) +
                   control.communitySources.length +
                   control.moderationReports.length +
                   (control.moderationReports.isEmpty ? 0 : 1),
               itemBuilder: (context, index) {
-                if (index == control.communitySources.length &&
+                final followsBase = _followsBase(control);
+                if (control.follows.isNotEmpty && index == 0) {
+                  return const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
+                    child: Text(
+                      '关注发布者',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  );
+                }
+                if (control.follows.isNotEmpty &&
+                    index > 0 &&
+                    index < followsBase) {
+                  final follow = control.follows[index - 1];
+                  final identityCid =
+                      '${follow['identity_cid'] ?? '-'}';
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      leading: const Icon(Icons.person),
+                      title: Text(
+                        '${follow['display_name'] ?? identityCid}',
+                      ),
+                      subtitle: Text(
+                        '${follow['publisher_id'] ?? '-'}\n'
+                        'Identity CID: $identityCid',
+                      ),
+                      trailing: IconButton(
+                        tooltip: '取消关注',
+                        onPressed: () =>
+                            control.unfollowPublisher(identityCid),
+                        icon: const Icon(Icons.person_remove),
+                      ),
+                    ),
+                  );
+                }
+                final shifted = index - followsBase;
+                if (shifted == control.communitySources.length &&
                     control.moderationReports.isNotEmpty) {
                   return const Padding(
                     padding: EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -1176,11 +1225,11 @@ class _CommunityTab extends StatelessWidget {
                     ),
                   );
                 }
-                if (index > control.communitySources.length ||
+                if (shifted > control.communitySources.length ||
                     (control.communitySources.isEmpty &&
                         control.moderationReports.isNotEmpty)) {
                   final reportIndex =
-                      index - control.communitySources.length - 1;
+                      shifted - control.communitySources.length - 1;
                   final record = control.moderationReports[reportIndex];
                   final report =
                       record['report'] as Map<String, dynamic>? ?? const {};
@@ -1218,7 +1267,7 @@ class _CommunityTab extends StatelessWidget {
                     ),
                   );
                 }
-                final source = control.communitySources[index];
+                final source = control.communitySources[shifted];
                 final manifest =
                     source['manifest'] as Map<String, dynamic>? ?? const {};
                 final id = '${manifest['source_id'] ?? source['manifest_cid']}';
@@ -1296,6 +1345,57 @@ class _CommunityTab extends StatelessWidget {
                 );
               },
             ),
+    );
+  }
+
+  /// 直接关注发布者（COM-003）。
+  Future<void> _follow(BuildContext context) async {
+    final identityCid = TextEditingController();
+    final publisherId = TextEditingController();
+    final displayName = TextEditingController();
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('关注发布者'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: identityCid,
+                decoration: const InputDecoration(
+                  labelText: '发布者 Identity CID',
+                ),
+              ),
+              TextField(
+                controller: publisherId,
+                decoration: const InputDecoration(labelText: 'publisher_id'),
+              ),
+              TextField(
+                controller: displayName,
+                decoration: const InputDecoration(labelText: '显示名称'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('关注'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    await control.followPublisher(
+      identityCid.text,
+      publisherId.text,
+      displayName.text,
     );
   }
 
@@ -1982,6 +2082,9 @@ String _bytes(dynamic value) {
 }
 
 /// 从保存路径判断是否是可边下边播的音频文件，返回对应 MIME。
+int _followsBase(ControlPlaneProvider control) =>
+    control.follows.isEmpty ? 0 : control.follows.length + 1;
+
 String? _audioMimeForPath(String path) {
   final lower = path.toLowerCase();
   if (lower.endsWith('.mp3')) return 'audio/mpeg';

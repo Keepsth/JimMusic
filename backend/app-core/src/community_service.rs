@@ -111,6 +111,20 @@ struct CommunityRepositoryState {
     removed_bootstrap_sources: BTreeSet<String>,
     #[serde(default)]
     feed_limits: FeedLimits,
+    #[serde(default)]
+    followed_publishers: BTreeMap<String, FollowedPublisherV1>,
+}
+
+/// 直接关注的发布者（COM-003）：以发布者身份 CID 为键的本地关注记录。
+/// 关注后，本地目录中该发布者的 Manifest 会被导入媒体库，即使全部
+/// Catalog 源随后被禁用也保持可搜索、可播放。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FollowedPublisherV1 {
+    pub schema_version: u16,
+    pub identity_cid: String,
+    pub publisher_id: String,
+    pub display_name: String,
+    pub followed_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -183,6 +197,7 @@ impl CommunitySourceService {
                     maintainer_key_feeds: BTreeMap::new(),
                     moderation_reports: BTreeMap::new(),
                     removed_bootstrap_sources: BTreeSet::new(),
+                    followed_publishers: BTreeMap::new(),
                     feed_limits: FeedLimits::default(),
                 },
             )?,
@@ -902,6 +917,108 @@ impl CommunitySourceService {
 
     pub fn rebuild_index(&self, now: i64) -> Vec<CatalogSearchResult> {
         self.search_catalog("", now)
+    }
+
+    /// 当前目录（已启用 Catalog 源）中收录的 Music Manifest 目标 CID 集合。
+    pub fn catalog_manifests(&self, now: i64) -> BTreeSet<String> {
+        let state = self.store.snapshot();
+        let mut targets = BTreeSet::new();
+        for (source_id, feed) in &state.catalog_feeds {
+            if !state
+                .sources
+                .get(source_id)
+                .is_some_and(|source| source.catalog_enabled)
+            {
+                continue;
+            }
+            for stored in feed {
+                if stored.event.expires_at.is_some_and(|expiry| expiry <= now) {
+                    continue;
+                }
+                if stored.event.action == CatalogAction::Remove {
+                    continue;
+                }
+                if stored.event.target_type == "music_manifest" {
+                    targets.insert(stored.event.target_cid.clone());
+                }
+            }
+        }
+        targets
+    }
+
+    /// 直接关注发布者（COM-003）。
+    pub fn follow_publisher(
+        &self,
+        identity_cid: String,
+        publisher_id: String,
+        display_name: String,
+        timestamp: i64,
+    ) -> Result<FollowedPublisherV1, CommunityError> {
+        let identity_cid = identity_cid.trim().to_string();
+        let publisher_id = publisher_id.trim().to_string();
+        let display_name = display_name.trim().to_string();
+        if identity_cid.is_empty()
+            || identity_cid.len() > 256
+            || publisher_id.is_empty()
+            || publisher_id.len() > 256
+            || display_name.is_empty()
+            || display_name.len() > 200
+        {
+            return Err(CommunityError::Invalid(
+                "identity_cid / publisher_id / display_name must be non-empty and bounded".into(),
+            ));
+        }
+        let record = FollowedPublisherV1 {
+            schema_version: SCHEMA_V1,
+            identity_cid: identity_cid.clone(),
+            publisher_id,
+            display_name,
+            followed_at: timestamp,
+        };
+        self.store.transact(|state| {
+            if state.followed_publishers.len() >= 4096
+                && !state.followed_publishers.contains_key(&identity_cid)
+            {
+                return Err(StorageError::Corrupt {
+                    path: PathBuf::from("followed-publishers"),
+                    reason: "at most 4096 publishers may be followed".into(),
+                });
+            }
+            state
+                .followed_publishers
+                .insert(identity_cid, record.clone());
+            Ok(())
+        })?;
+        Ok(record)
+    }
+
+    pub fn unfollow_publisher(&self, identity_cid: &str) -> Result<(), CommunityError> {
+        self.store.transact(|state| {
+            state
+                .followed_publishers
+                .remove(identity_cid)
+                .ok_or_else(|| StorageError::Corrupt {
+                    path: PathBuf::from("followed-publishers"),
+                    reason: format!("publisher `{identity_cid}` is not followed"),
+                })
+                .map(|_| ())
+        })?;
+        Ok(())
+    }
+
+    pub fn followed_publishers(&self) -> Vec<FollowedPublisherV1> {
+        self.store
+            .snapshot()
+            .followed_publishers
+            .into_values()
+            .collect()
+    }
+
+    pub fn is_followed(&self, identity_cid: &str) -> bool {
+        self.store
+            .snapshot()
+            .followed_publishers
+            .contains_key(identity_cid)
     }
 
     pub fn catalog_targets(&self, now: i64) -> BTreeSet<String> {

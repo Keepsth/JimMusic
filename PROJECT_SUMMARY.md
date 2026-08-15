@@ -69,11 +69,11 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 232 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 233 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，41 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
-  边下边播代理链路与播放页来源/缓冲/传输状态展示）；
+- Flutter analyze 零问题，42 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+  边下边播代理链路、播放页来源/缓冲/传输状态展示与发布者关注 mutation）；
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；
@@ -86,6 +86,9 @@
 - 收藏协助 Pin 与第三方 Pin 服务（DST-009）：收藏时按显式开关协助 Pin 内容 CID（本地直
   Pin / 幂等 Pin 传输任务，服从网络策略）；显式 Pin 与发布后把 CID 推送给用户配置的
   Kubo 兼容第三方服务；Provider 健康度回填配置的服务列表；
+- 直接关注发布者（COM-003）：关注/取消/列表 API 持久化关注记录，关注后把目录中该发布者
+  的 Music Manifest 解析（本地 CAS/P2P、签名校验）导入媒体库，禁用全部 Catalog 后仍可
+  搜索播放，取消关注不删除已导入的用户数据；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
   重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询，不再依赖 5s 定时轮询；
 - 社区源紧凑快照端点支持 gzip 传输压缩、SHA-256/字节数完整性头与 32 MiB 未压缩上限；

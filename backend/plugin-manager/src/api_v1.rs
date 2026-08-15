@@ -79,6 +79,14 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/community-sources/{id}/snapshot", get(source_snapshot))
         .route(
+            "/community-sources/follows",
+            get(list_follows).post(follow_publisher),
+        )
+        .route(
+            "/community-sources/follows/{identity_cid}",
+            delete(unfollow_publisher),
+        )
+        .route(
             "/moderation-reports",
             get(list_moderation_reports).post(queue_moderation_report),
         )
@@ -1746,6 +1754,120 @@ async fn apply_maintainer_key_event(
     Ok(Json(
         serde_json::json!({"event_cid": cid, "action": action}),
     ))
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct FollowPublisherRequest {
+    identity_cid: String,
+    publisher_id: String,
+    display_name: String,
+}
+
+async fn list_follows(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<app_core::community_service::FollowedPublisherV1>> {
+    Json(state.community.followed_publishers())
+}
+
+/// COM-003：直接关注发布者。关注后把本地目录中该发布者的 Music Manifest
+/// 导入媒体库（本地 CAS 或 P2P 解析、签名校验、单次最多 128 个），
+/// 此后即使禁用全部 Catalog 源，这些作品仍可搜索、可播放。
+async fn follow_publisher(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(request): Json<FollowPublisherRequest>,
+) -> ApiResult<serde_json::Value> {
+    let request_id = request_id(&headers, None)?;
+    let fingerprint = crate::state::sha256_hex(&serde_json::to_vec(&request).unwrap_or_default());
+    let (followed, replayed) = state
+        .idempotency
+        .execute("community.follow", &request_id, &fingerprint, || {
+            state
+                .community
+                .follow_publisher(
+                    request.identity_cid.clone(),
+                    request.publisher_id.clone(),
+                    request.display_name.clone(),
+                    now(),
+                )
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| map_idempotency("community", "follow", error))?;
+    let mut imported = 0u64;
+    let mut skipped = 0u64;
+    if !replayed {
+        let identity_cid = followed.identity_cid.clone();
+        // 解析发布者身份（本地注册表 → 内容寻址对象）以校验 Manifest 签名。
+        let identity = match state.publications.identity(&identity_cid) {
+            Some(identity) => Some(identity),
+            None => match fetch_dag_object(&state, &identity_cid).await {
+                Ok(bytes) => jimmusic_protocol::decode_dag_cbor::<PublisherIdentityV1>(&bytes).ok(),
+                Err(_) => None,
+            },
+        };
+        let manifests = state.community.catalog_manifests(now());
+        for cid in manifests.into_iter().take(128) {
+            let Ok(bytes) = fetch_dag_object(&state, &cid).await else {
+                skipped += 1;
+                continue;
+            };
+            let Ok(manifest) = jimmusic_protocol::decode_dag_cbor::<MusicManifestV1>(&bytes) else {
+                skipped += 1;
+                continue;
+            };
+            if manifest.publisher_identity_cid != identity_cid {
+                continue;
+            }
+            if let Some(identity) = &identity {
+                let signature_ok =
+                    manifest
+                        .publisher_signature
+                        .as_deref()
+                        .is_some_and(|signature| {
+                            app_core::crypto::verify_ed25519_hex(
+                                &identity.public_key,
+                                signature,
+                                &manifest.unsigned_bytes().unwrap_or_default(),
+                            )
+                            .is_ok()
+                        });
+                if !signature_ok {
+                    skipped += 1;
+                    continue;
+                }
+            }
+            match state.library.import_manifest(cid, &manifest, now()) {
+                Ok(_) => imported += 1,
+                Err(_) => skipped += 1,
+            }
+        }
+    }
+    Ok(Json(serde_json::json!({
+        "followed": followed,
+        "imported": imported,
+        "skipped": skipped,
+    })))
+}
+
+async fn unfollow_publisher(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(identity_cid): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let request_id = request_id(&headers, None)?;
+    let fingerprint = crate::state::sha256_hex(identity_cid.as_bytes());
+    let (_, _) = state
+        .idempotency
+        .execute("community.unfollow", &request_id, &fingerprint, || {
+            state
+                .community
+                .unfollow_publisher(&identity_cid)
+                .map_err(|error| error.to_string())?;
+            Ok(serde_json::json!({"unfollowed": identity_cid}))
+        })
+        .map_err(|error| map_idempotency("community", "unfollow", error))?;
+    // 已导入媒体库的作品按 COM-003 保留（取消关注不删除用户数据）。
+    Ok(Json(serde_json::json!({"unfollowed": identity_cid})))
 }
 
 /// 快照响应（未压缩形态）的字节上限；超出时拒绝并提示使用 gzip 传输。
@@ -3885,6 +4007,205 @@ mod tests {
                 .iter()
                 .all(|entry| entry["cid"] != content_cid),
             "assist pin must not run when disabled: {pins}"
+        );
+    }
+
+    #[tokio::test]
+    async fn follow_publisher_imports_catalog_manifests_and_survives_source_removal() {
+        use jimmusic_protocol::{canonical_dag_cbor, CatalogAction, LicenseDeclaration};
+
+        let (state, _dir) = state();
+        // 发布者身份注册到发布服务。
+        let key = SigningKey::from_bytes(&[28; 32]);
+        let public_key = hex::encode(key.verifying_key().to_bytes());
+        let publisher_id = app_core::publication_service::publisher_id_from_public_key(&public_key);
+        let identity_cid = state
+            .publications
+            .register_identity(
+                PublisherIdentityV1 {
+                    schema_version: SCHEMA_V1,
+                    publisher_id: publisher_id.clone(),
+                    public_key,
+                    display_name: "Followed Publisher".into(),
+                    created_at: 1,
+                    previous_key: None,
+                    rotation_proof: None,
+                    revoked_at: None,
+                    revocation_proof: None,
+                },
+                &state.node,
+            )
+            .unwrap();
+
+        // 签名 Manifest 并存入本地 CAS。
+        let mut manifest = MusicManifestV1 {
+            schema_version: SCHEMA_V1,
+            work_id: "followed-work".into(),
+            release_id: "followed-release".into(),
+            title: "Followed Track".into(),
+            artists: vec!["Followed Artist".into()],
+            album: "Followed Album".into(),
+            track_number: Some(1),
+            disc_number: Some(1),
+            duration_ms: 1_000,
+            language: "en".into(),
+            genres: Vec::new(),
+            tags: Vec::new(),
+            cover_cid: None,
+            lyrics_cid: None,
+            credits: BTreeMap::new(),
+            license: LicenseDeclaration {
+                identifier: "CC-BY-4.0".into(),
+                rights_statement: None,
+                allows_redistribution: true,
+            },
+            content_labels: vec!["clean".into()],
+            renditions: vec![jimmusic_protocol::MusicRenditionV1 {
+                rendition_id: "original".into(),
+                content_cid: "bafyfollowedcontent".into(),
+                container: "flac".into(),
+                codec: "flac".into(),
+                profile: String::new(),
+                sample_rate: 44_100,
+                bit_depth: 24,
+                channels: 2,
+                channel_layout: "stereo".into(),
+                duration_ms: 1_000,
+                byte_length: 10,
+                lossless: true,
+                original: true,
+                streamable: true,
+            }],
+            publisher_identity_cid: identity_cid.clone(),
+            created_at: 2,
+            updated_at: 2,
+            publisher_signature: None,
+        };
+        manifest.publisher_signature = Some(hex::encode(
+            key.sign(&manifest.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        let manifest_cid = state
+            .node
+            .add_dag_cbor(&canonical_dag_cbor(&manifest).unwrap(), false)
+            .unwrap();
+
+        // 社区源目录收录该 Manifest。
+        let maintainer = SigningKey::from_bytes(&[29; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "follow.example".into(),
+            name: "Follow".into(),
+            description: "follow test source".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+        let mut event = CatalogEventV1 {
+            schema_version: SCHEMA_V1,
+            action: CatalogAction::Include,
+            target_type: "music_manifest".into(),
+            target_cid: manifest_cid.clone(),
+            categories: vec!["music".into()],
+            tags: vec!["followed".into()],
+            annotation: None,
+            sequence: 0,
+            previous_event_cid: None,
+            expires_at: None,
+            issued_at: 2,
+            signature: None,
+        };
+        event.signature = Some(hex::encode(
+            maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        state
+            .community
+            .ingest_catalog("follow.example", event, &state.node)
+            .unwrap();
+
+        // 关注发布者 → Manifest 导入媒体库。
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/community-sources/follows")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "follow-1")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "identity_cid": identity_cid,
+                            "publisher_id": publisher_id,
+                            "display_name": "Followed Publisher",
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["imported"], 1, "{body}");
+        assert_eq!(body["skipped"], 0, "{body}");
+
+        // 搜索合并：本地曲库包含该作品。
+        let (status, search) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/search?q=Followed",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            search["local"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|track| track["title"] == "Followed Track"),
+            "{search}"
+        );
+
+        // 移除目录源后（相当于禁用全部 Catalog）仍可搜索、可播放。
+        state.community.remove_source("follow.example").unwrap();
+        let (status, search) = call(
+            routes(),
+            state,
+            "GET",
+            "/search?q=Followed",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            search["local"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|track| track["title"] == "Followed Track"),
+            "followed publisher content must survive source removal: {search}"
         );
     }
 

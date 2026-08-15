@@ -28,6 +28,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> _plugins = [];
   List<Map<String, dynamic>> _communitySources = [];
   List<Map<String, dynamic>> _moderationReports = [];
+  List<Map<String, dynamic>> _follows = [];
   List<Map<String, dynamic>> _pins = [];
   Object? _lastResult;
   StreamSubscription<SseEvent>? _eventSub;
@@ -72,6 +73,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get plugins => _plugins;
   List<Map<String, dynamic>> get communitySources => _communitySources;
   List<Map<String, dynamic>> get moderationReports => _moderationReports;
+  List<Map<String, dynamic>> get follows => _follows;
   List<Map<String, dynamic>> get pins => _pins;
   Object? get lastResult => _lastResult;
   bool get connected => _health?['status'] == 'ok';
@@ -111,6 +113,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     '/transfers',
     '/plugins',
     '/community-sources',
+    '/community-sources/follows',
     '/moderation-reports',
     '/audio/path',
     '/audio/stats',
@@ -163,6 +166,8 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
         _plugins = _list(value);
       case '/community-sources':
         _communitySources = _list(value);
+      case '/community-sources/follows':
+        _follows = _list(value);
       case '/moderation-reports':
         _moderationReports = _list(value);
       case '/audio/path':
@@ -410,6 +415,30 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
         ),
       );
 
+  Future<void> followPublisher(
+    String identityCid,
+    String publisherId,
+    String displayName,
+  ) async {
+    final requestId = 'follow-${DateTime.now().microsecondsSinceEpoch}';
+    await _mutate(
+      (api) => api.post(
+        '/community-sources/follows',
+        {
+          'identity_cid': identityCid.trim(),
+          'publisher_id': publisherId.trim(),
+          'display_name': displayName.trim(),
+        },
+        {'idempotency-key': requestId},
+      ),
+    );
+  }
+
+  Future<void> unfollowPublisher(String identityCid) => _mutate(
+    (api) =>
+        api.delete('/community-sources/follows/${Uri.encodeComponent(identityCid)}'),
+  );
+
   Future<void> setCommunitySwitches(
     String id, {
     required bool catalogEnabled,
@@ -462,7 +491,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loading = true;
     _error = null;
     notifyListeners();
-    final api = ControlApi(endpoint: _endpoint, token: _token);
+    final api = _makeApi();
     try {
       _lastResult = await operation(api);
     } catch (error) {
