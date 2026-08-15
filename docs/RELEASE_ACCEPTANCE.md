@@ -32,7 +32,7 @@
 | 撤销防回滚 | 通过 | enable/rollback 对已撤销发布拒绝（含手工改回 Disabled 的绕过）；mutate_record 保留域错误语义；生命周期测试 2 项 |
 | 策略本地覆盖 | 通过 | 非强制策略（warn/demote/hide）可本地覆盖/取消，block/revoke 强制拒绝；社区页策略查询对话框；API 1 项 + Flutter 1 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 75、部分实现 47、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 74、部分实现 48、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 
