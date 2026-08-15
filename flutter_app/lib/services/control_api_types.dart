@@ -23,6 +23,9 @@ class ApiErrorText {
 /// 把控制面错误（[ControlApiException] 携带的 ErrorEnvelopeV1 或普通文本）
 /// 映射为一致的本地化文案。所有 UI 入口应使用同一函数，保证七端语义一致。
 ApiErrorText apiErrorText(Object error) {
+  if ('$error' == '操作已取消' || error is String && error == '操作已取消') {
+    return const ApiErrorText('操作已取消', suggestion: '可以重新发起操作');
+  }
   if (error is ControlApiException) {
     if (error.statusCode == 401) {
       return const ApiErrorText(

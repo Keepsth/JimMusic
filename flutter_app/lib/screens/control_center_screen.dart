@@ -21,6 +21,17 @@ class ControlCenterScreen extends StatelessWidget {
         appBar: AppBar(
           title: const Text('JimMusic 控制台'),
           actions: [
+            Consumer<ControlPlaneProvider>(
+              builder: (context, control, _) {
+                if (!control.loading) return const SizedBox.shrink();
+                // UI-010：取消当前进行中的操作。
+                return IconButton(
+                  tooltip: '取消当前操作',
+                  onPressed: control.cancelCurrentOperation,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                );
+              },
+            ),
             IconButton(
               tooltip: '连接设置',
               onPressed: () => _configure(context),

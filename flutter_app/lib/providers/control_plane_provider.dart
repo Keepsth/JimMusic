@@ -20,6 +20,8 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _loading = false;
   String? _error;
   Object? _errorDetail;
+  ControlApi? _activeApi;
+  bool _cancelled = false;
   Map<String, dynamic>? _health;
   Map<String, dynamic>? _node;
   Map<String, dynamic>? _deviceNode;
@@ -100,6 +102,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     _error = null;
     notifyListeners();
     final api = _makeApi();
+    _registerActiveApi(api);
     try {
       final report = await LibrarySyncService().sync(api, player);
       _librarySyncReport = report;
@@ -113,6 +116,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       return null;
     } finally {
+      _unregisterActiveApi(api);
       api.close();
     }
   }
@@ -171,6 +175,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     _error = null;
     notifyListeners();
     final api = _makeApi();
+    _registerActiveApi(api);
     try {
       final values = await Future.wait<dynamic>(
         paths.map((path) => api.get(path)),
@@ -179,9 +184,15 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
         _applyPath(paths[i], values[i]);
       }
     } catch (error) {
-      _error = error.toString();
-      _errorDetail = error;
+      if (_cancelled) {
+        _error = '操作已取消';
+        _errorDetail = null;
+      } else {
+        _error = error.toString();
+        _errorDetail = error;
+      }
     } finally {
+      _unregisterActiveApi(api);
       api.close();
       await Future.wait([_refreshBrowserNode(), _refreshDeviceNode()]);
       _loading = false;
@@ -601,12 +612,19 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     _error = null;
     notifyListeners();
     final api = _makeApi();
+    _registerActiveApi(api);
     try {
       _lastResult = await operation(api);
     } catch (error) {
-      _error = error.toString();
-      _errorDetail = error;
+      if (_cancelled) {
+        _error = '操作已取消';
+        _errorDetail = null;
+      } else {
+        _error = error.toString();
+        _errorDetail = error;
+      }
     } finally {
+      _unregisterActiveApi(api);
       api.close();
       _loading = false;
       notifyListeners();
@@ -616,7 +634,29 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void clearError() {
     _error = null;
+    _errorDetail = null;
     notifyListeners();
+  }
+
+  /// UI-010：取消当前进行中的控制面操作（关闭其专属客户端，
+  /// 进行中的请求以“操作已取消”结束）。
+  Future<void> cancelCurrentOperation() {
+    final active = _activeApi;
+    if (active == null) return Future.value();
+    _cancelled = true;
+    active.close();
+    notifyListeners();
+    return Future.value();
+  }
+
+  /// 注册当前进行中的客户端（供取消与防串扰）。
+  void _registerActiveApi(ControlApi api) {
+    _activeApi = api;
+    _cancelled = false;
+  }
+
+  void _unregisterActiveApi(ControlApi api) {
+    if (identical(_activeApi, api)) _activeApi = null;
   }
 
   // ---------- 事件流（SSE）----------
@@ -838,6 +878,8 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     _disposed = true;
     _stopEventStream();
+    _activeApi?.close();
+    _activeApi = null;
     _reconnectTimer?.cancel();
     _fallbackPoller?.cancel();
     _coalesceTimer?.cancel();

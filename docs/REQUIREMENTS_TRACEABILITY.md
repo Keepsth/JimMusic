@@ -136,7 +136,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | UI-007 | 本机通过 | Audio Path 显示节点、转换、延迟补偿、缓冲、实时统计，并展示应用内 Rust Core 已打开输出会话的设备、驱动、协商格式、缓冲、时钟与证据来源 | 应用内会话和控制服务音频图仍是两个进程视图，七端同一会话快照待 RC 验收 |
 | UI-008 | 部分实现 | 显示 bit-perfect 状态、逐项条件、失败原因和真实协商格式；无会话证据时明确不宣称成功 | 尚无被证明为 exclusive 的专业驱动会话与物理设备证据 |
 | UI-009 | 部分实现 | 节点配额/并发/限速/计量、输出和插件设置可持久化 | 音乐目录、pin service 与全部安全偏好未统一 |
-| UI-010 | 部分实现 | 全局加载/错误、传输细状态和重试、结构化失败 | 多个短操作仍无独立进度/取消状态 |
+| UI-010 | 本机通过 | 全局加载/错误、传输细状态和重试、结构化失败；取消语义：控制面每个进行中操作注册专属客户端，控制台提供“取消当前操作”按钮（关闭客户端 → 操作以“操作已取消”结束并可重新发起）；1 项测试 | 每操作独立进度条与七端交互待验收 |
 | API-001 | 部分实现 | protocol DTO + Rust 服务 + `/v1` HTTP + FFI 播放桥 | JS/WASM 与所有服务的契约一致性测试不全 |
 | API-002 | 本机通过 | DTO/事件/错误/网络对象 `schema_version`，严格 canonical 解码限制；协议测试 | 跨语言兼容向量待补 |
 | API-003 | 本机通过 | 所有 HTTP mutation 强制 Idempotency-Key/request_id，指纹冲突和持久 replay；API 测试 | 旧 legacy 路由只返回 410，不迁移副作用 |
@@ -172,7 +172,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | NFR-009 | 部分实现 | 本地隐私会话账本以启动 marker/正常关闭区分 clean 与 unclean，重启累计并在 health/诊断输出聚合 crash-free rate；测试 | 无七端长期样本，不能宣称达到 99.5% |
 | NFR-010 | 待外证 | CI 配置 llvm-cov 80% 门槛 | 当前提交需由 CI 重新生成覆盖率报告 |
 | NFR-011 | 部分实现 | Flutter Material/SelectableText/标准控件 | 未做键盘、读屏、200% 缩放和对比度审计 |
-| NFR-012 | 部分实现 | 结构化错误/事件含子系统、操作和 request_id；tracing | 全链路 correlation ID 和日志脱敏审计不完整 |
+| NFR-012 | 本机通过 | 结构化错误/事件含子系统、操作和 request_id；tracing；全链路关联 ID：每个 HTTP 请求一个 `v1_request` span（method/path/request_id，request_id 取自 Idempotency-Key 且长度受限，不读取 Authorization 等秘密头）；提取/脱敏测试 2 项 | 发布构建日志采样与长期审计待验收 |
 | NFR-013 | 待外证 | 曲库/歌单/插件/本地 CAS 均为本地原子状态 | 七端离线场景未跑 |
 | NFR-014 | 部分实现 | Schema version、原子状态、API migration 文档 | 自动向前迁移与降级恢复测试不完整 |
 | REL-001 | 本机通过 | 本文逐项映射 ID、代码、测试、平台缺口 | 发布后需补实际构建产物链接 |

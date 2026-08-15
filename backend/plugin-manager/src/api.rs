@@ -64,7 +64,36 @@ pub fn build_router(state: AppState) -> Router {
         ))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
-    public.merge(protected).nest("/v1", v1).with_state(state)
+    public
+        .merge(protected)
+        .nest("/v1", v1)
+        .layer(
+            // NFR-012：全链路关联 ID——每个 HTTP 请求一个 span，携带
+            // method/path/request_id；脱敏：不记录 Authorization 等秘密头。
+            tower_http::trace::TraceLayer::new_for_http().make_span_with(v1_request_span),
+        )
+        .with_state(state)
+}
+
+/// NFR-012：从 Idempotency-Key 头提取关联 ID（长度受限，脱敏）。
+fn correlation_request_id(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("idempotency-key")
+        .and_then(|value| value.to_str().ok())
+        .filter(|value| !value.is_empty() && value.len() <= 200)
+        .map(str::to_owned)
+}
+
+/// NFR-012：为每个请求构造关联 span（request_id 取自 Idempotency-Key 头，
+/// 不读取 Authorization 等秘密头）。
+fn v1_request_span(request: &axum::http::Request<axum::body::Body>) -> tracing::Span {
+    let request_id = correlation_request_id(request.headers()).unwrap_or_else(|| "-".into());
+    tracing::info_span!(
+        "v1_request",
+        method = %request.method(),
+        path = %request.uri().path(),
+        request_id,
+    )
 }
 
 /// Enforce and persistently replay every mutating v1 request. Individual
@@ -337,6 +366,31 @@ mod tests {
     use super::*;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+
+    #[test]
+    fn correlation_request_id_extraction_is_bounded() {
+        use axum::http::HeaderMap;
+        let mut headers = HeaderMap::new();
+        assert_eq!(correlation_request_id(&headers), None);
+        headers.insert("idempotency-key", "req-42".parse().unwrap());
+        assert_eq!(correlation_request_id(&headers).as_deref(), Some("req-42"));
+        let too_long = "x".repeat(201);
+        headers.insert("idempotency-key", too_long.parse().unwrap());
+        assert_eq!(correlation_request_id(&headers), None);
+    }
+
+    #[test]
+    fn span_carries_correlation_without_secrets() {
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/pins/bafy")
+            .header("idempotency-key", "req-42")
+            .header("authorization", "Bearer topsecret")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let span = v1_request_span(&request);
+        assert_eq!(span.metadata().unwrap().name(), "v1_request");
+    }
 
     /// 返回一个使用唯一临时目录的状态（`TempDir` 随测试结束自动清理，避免并行竞态）。
     fn test_state() -> (AppState, tempfile::TempDir) {

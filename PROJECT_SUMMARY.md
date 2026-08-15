@@ -69,12 +69,13 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 243 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 245 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，64 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+- Flutter analyze 零问题，65 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
   边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
-  本地化、发布者索引、离线队列提示、播放模式边界、声明式配置控件与曲库统一同步）；
+  本地化、发布者索引、离线队列提示、播放模式边界、声明式配置控件、操作取消
+  与曲库统一同步）；
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；
@@ -110,6 +111,10 @@
   错误、崩溃中断重启标记 interrupted（≤64 条滚动），插件页展示；
 - 声明式配置控件（PLG-014/UI-101）：插件配置 Schema 端点（JSON/DAG-CBOR 双编码解析），
   Flutter 按 Schema 渲染开关/枚举/滑杆/文本框（默认值计算），不可解析回退 JSON 编辑；
+- 关联 ID（NFR-012）：每个 HTTP 请求一个 v1_request span（method/path/request_id），
+  Idempotency-Key 提取长度受限且不读取秘密头；
+- 操作取消（UI-010）：控制台“取消当前操作”关闭进行中操作的专属客户端，操作以
+  “操作已取消”结束并可重新发起；
 - 错误本地化（API-004）：Flutter 统一把稳定错误信封映射为本地化文案、重试建议与网络
   恢复提示，控制台横幅与传输错误行统一消费；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
