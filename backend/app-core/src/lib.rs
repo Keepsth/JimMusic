@@ -34,6 +34,8 @@ pub mod publication_service;
 pub mod reliability;
 pub mod storage;
 pub mod streaming;
+#[doc(hidden)]
+pub mod test_contracts;
 pub mod transfer_service;
 
 pub use audio::{PcmChunk, PcmQueue, PcmQueueClosed};

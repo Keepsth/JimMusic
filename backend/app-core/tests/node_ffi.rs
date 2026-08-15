@@ -46,7 +46,8 @@ fn native_node_ffi_persists_identity_and_reports_lifecycle_honestly() {
         .unwrap()
         .iter()
         .any(|transport| transport == "bitswap"));
-    let peer_id = foreground["peer_id"].as_str().unwrap().to_owned();
+    // API-001：与 HTTP 适配器共享同一契约断言集。
+    let peer_id = app_core::test_contracts::assert_node_status_contract(&foreground);
 
     assert_eq!(jimmusic_node_set_foreground(0), 0);
     assert_eq!(status()["lifecycle_state"], "background_degraded");

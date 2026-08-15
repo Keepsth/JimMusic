@@ -137,7 +137,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | UI-008 | 部分实现 | 显示 bit-perfect 状态、逐项条件、失败原因和真实协商格式；无会话证据时明确不宣称成功 | 尚无被证明为 exclusive 的专业驱动会话与物理设备证据 |
 | UI-009 | 本机通过 | 节点配额/并发/限速/计量、输出和插件设置可持久化；曲库页新增音乐目录设置（查询/设置，“仅切换”语义并明示复制/移动未实现）；pin service 已在节点设置统一；Flutter 测试 1 项 | “复制/移动”目录选项与全部安全偏好的七端验收待补 |
 | UI-010 | 本机通过 | 全局加载/错误、传输细状态和重试、结构化失败；取消语义：控制面每个进行中操作注册专属客户端，控制台提供“取消当前操作”按钮（关闭客户端 → 操作以“操作已取消”结束并可重新发起）；1 项测试 | 每操作独立进度条与七端交互待验收 |
-| API-001 | 部分实现 | protocol DTO + Rust 服务 + `/v1` HTTP + FFI 播放桥 | JS/WASM 与所有服务的契约一致性测试不全 |
+| API-001 | 本机通过 | protocol DTO + Rust 服务 + `/v1` HTTP + FFI 播放桥；`app-core::test_contracts` 提供同一契约断言集，对 HTTP（`/v1/health`+`/v1/node/status`）与 FFI（C ABI 节点状态）两种适配器运行；JS/WASM 适配器经 Helia 互操作测试验证 DAG 对象契约 | IPC 传输适配器尚未存在，七端待验收 |
 | API-002 | 本机通过 | DTO/事件/错误/网络对象 `schema_version`，严格 canonical 解码限制；协议测试 | 跨语言兼容向量待补 |
 | API-003 | 本机通过 | 所有 HTTP mutation 强制 Idempotency-Key/request_id，指纹冲突和持久 replay；API 测试 | 旧 legacy 路由只返回 410，不迁移副作用 |
 | API-004 | 本机通过 | 稳定错误信封与播放失败模型；Flutter 统一本地化映射（`apiErrorText`）：unsupported/not_found/conflict/payload_too_large/幂等键/网络暂停码/401 → 本地化文案 + 重试建议 + 恢复提示，控制台横幅与传输错误行统一消费；5 项测试 | 跨语言与无障碍复核待验收 |

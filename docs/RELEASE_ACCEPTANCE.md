@@ -9,7 +9,7 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（255） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、三入口策略标注、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
+| Rust tests | 通过（256） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema、插件目录浏览/搜索/详情、三入口策略标注、关联 ID、CORS 与状态版本保护，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
@@ -21,6 +21,7 @@
 | Release binary smoke | 通过 | health/未授权拒绝/原生节点传输状态；优雅退出后以同一 repo 重启并保持稳定 PeerId |
 | 验收报告校验器 | 通过（5） | 自动读取 134 项 P0，拒绝模拟器、P0 unsupported、资源回退超限与不完整报告 |
 | 控制面 SSE 消费 | 通过 | Flutter 消费 `/v1/events`：sequence 缺口与 snapshot.required 触发整体重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询；IO(HttpClient)/Web(fetch 流式) 双传输；13 项测试 |
+| 跨传输契约测试 | 通过 | `app-core::test_contracts` 提供同一节点状态/健康契约断言集，对 HTTP（`/v1/health`+`/v1/node/status`）与 FFI（C ABI 节点状态）两种适配器运行；JS/WASM 适配器经 Helia 互操作测试验证 DAG 对象契约；API 1 项 + FFI 1 项测试 |
 | Feed 快照压缩 | 通过 | 社区源快照支持 `Accept-Encoding: gzip`、`x-snapshot-sha256`/字节数完整性头与 32 MiB 未压缩上限（413 结构化错误）；API 测试 |
 | 边下边播流端点 | 通过 | `/v1/transfers/{id}/stream` 跟随 part 增长输出、单范围 Range、终结后尾部交接、整块路径落盘交接与孤儿清理；Flutter 经 just_audio 代理注入鉴权播放并支持 Seek；Rust 4 项 + Flutter 4 项测试 |
 | 网络类别策略 | 通过 | 网络类别声明驱动仅 Wi-Fi/计量开关的传输暂停与自动恢复（只恢复网络暂停任务）；runner 执行前复查；上传限速按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示；服务 2 项 + API 2 项测试 |
@@ -55,7 +56,7 @@
 | 插件目录浏览 | 通过 | `GET /v1/plugins/catalog` 列出社区目录收录的 PluginManifest 条目并支持 `q` 搜索（CID/分类/标签/注解），`/catalog/{cid}` 详情解析 Manifest（JSON/DAG-CBOR 双编码）并返回 artifact_available/installed_state/active_version/update_available/revoked 摘要；插件页目录浏览/搜索/详情/安装（发布者公钥与权限确认，`ipfs://CID` 直取制品）；API 1 项测试 |
 | 社区原生二次确认 | 通过 | 社区原生默认拒绝（CommunityNativeDenied）；高级授权安装前二次确认（持续警告文案），已安装插件列表永久标记警告条目；后端安装/撤销 E2E 测试 + Flutter 4 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 95、部分实现 27、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 96、部分实现 26、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

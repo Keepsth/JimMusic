@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 255 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 256 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，96 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -122,6 +122,9 @@
   插件页展示）；schema 降级拒绝（StateSchemaDowngrade）；
 - 关联 ID（NFR-012）：每个 HTTP 请求一个 v1_request span（method/path/request_id），
   Idempotency-Key 提取长度受限且不读取秘密头；
+- 跨传输契约测试（API-001）：`app-core::test_contracts` 提供同一节点状态/健康契约
+  断言集，对 HTTP（`/v1/health`+`/v1/node/status`）与 FFI（C ABI 节点状态）两种
+  适配器运行；JS/WASM 适配器经 Helia 互操作测试验证 DAG 对象契约；
 - 发布自动复刻（NOD-006/DST-010）：auto_replicate_published 开启后发布成功即把各
   rendition 内容 CID 建为幂等 Pin 传输任务并推送第三方 Pin 服务；
 - CORS（API-006）：浏览器客户端跨源访问控制面（预检 + 响应头），认证仍由 Bearer

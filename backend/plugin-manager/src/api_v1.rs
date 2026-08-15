@@ -3520,6 +3520,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn node_contract_runs_identically_over_http_and_ffi_adapters() {
+        // API-001：同一契约断言集对 HTTP 与 FFI 两种传输适配器运行。
+        use app_core::host::{jimmusic_node_start, jimmusic_node_status, jimmusic_node_stop};
+        use app_core::test_contracts::{assert_health_contract, assert_node_status_contract};
+        use std::ffi::CString;
+
+        // HTTP 适配器。
+        let (state, _dir) = state();
+        let (status, health) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/health",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{health}");
+        assert_health_contract(&health);
+        let (status, node) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/node/status",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{node}");
+        let http_peer = assert_node_status_contract(&node);
+        assert!(!http_peer.is_empty());
+
+        // FFI 适配器：同一断言集。FFI 入口使用自有全局运行时，
+        // 在独立线程上调用（避免在 tokio 运行时内再起运行时）。
+        let ffi_peer = std::thread::spawn(|| {
+            let directory = tempfile::tempdir().unwrap();
+            let root = CString::new(directory.path().to_string_lossy().as_bytes()).unwrap();
+            assert_eq!(jimmusic_node_stop(), 0);
+            assert_eq!(jimmusic_node_start(root.as_ptr()), 0);
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            let ffi_status = loop {
+                let mut bytes = vec![0_u8; 4096];
+                // SAFETY: `bytes` owns exactly `capacity` writable bytes.
+                let written = unsafe { jimmusic_node_status(bytes.as_mut_ptr(), bytes.len()) };
+                bytes.truncate(written);
+                let snapshot: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                if snapshot["peer_id"]
+                    .as_str()
+                    .is_some_and(|peer_id| !peer_id.is_empty())
+                    || std::time::Instant::now() >= deadline
+                {
+                    break snapshot;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            };
+            let peer = assert_node_status_contract(&ffi_status);
+            assert_eq!(jimmusic_node_stop(), 0);
+            peer
+        })
+        .join()
+        .expect("ffi adapter thread");
+        assert!(!ffi_peer.is_empty());
+    }
+
+    #[tokio::test]
     async fn v1_health_and_node_status_are_versioned() {
         let (state, _dir) = state();
         let (status, health) = call(
