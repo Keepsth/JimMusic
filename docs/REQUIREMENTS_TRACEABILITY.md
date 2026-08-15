@@ -99,7 +99,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 |---|---|---|---|
 | DST-001 | 本机通过 | 版本化音乐 DTO、严格 canonical DAG-CBOR、CIDv1、签名测试 | 跨语言/七端 golden vectors 待补 |
 | DST-002 | 本机通过 | Manifest 支持多个 rendition、original/lossless/codec 元数据；发布向导多 rendition 编辑（UI-004）；客户端按平台能力（Web 容器/编解码白名单）、质量（lossless/original 优先）与网络策略（计量网络偏好有损流式小体积）选择 rendition；Flutter 选择器 7 项测试 | 七端实测待补 |
-| DST-003 | 部分实现 | 校验、CID、签名、Pin、Feed、receipt 同节点事务；发布块同步到内置 P2P 仓库并可由 Helia 取回 | 另一节点从 Feed 解析到播放器的 UI 闭环待补 |
+| DST-003 | 本机通过 | 校验、CID、签名、Pin、Feed、receipt 同节点事务；发布块同步到内置 P2P 仓库并可由 Helia 取回；跨节点 E2E：节点 A 签名发布 + 目录 Feed，节点 B 经 Kubo 兼容网关（模拟 A 的网络可达性）刷新 Feed → 解析 Manifest → 导入曲库 → 为内容 CID 建立幂等 fetch 传输（播放器入口）；API 测试 1 项 | 七端/真机双节点实测待外证 |
 | DST-004 | 本机通过 | Ed25519 身份生成、Argon2id+XChaCha20 加密导出/导入/轮换/撤销；负向测试/UI | 系统钥匙串集成未实现 |
 | DST-005 | 本机通过 | publish/update/tombstone 序列、previous CID、签名、防重放；测试 | 远端 Feed 分叉协调策略待 P2P |
 | DST-006 | 本机通过 | -100..100 持久优先级、并发槽前确定性选队、运行时调优先级、暂停/恢复/取消/重试/进度与重启恢复；API/UI/测试 | 真正 kill -9/断电矩阵待七端 RC |

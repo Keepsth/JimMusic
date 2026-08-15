@@ -5142,6 +5142,265 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
     }
 
+    #[tokio::test]
+    async fn second_node_ingests_feed_over_gateway_and_reaches_playback_entry() {
+        // DST-003：节点 A 发布作品与目录 Feed；节点 B 经网关（模拟 A 的网络
+        // 可达性）刷新 Feed → 解析 Manifest → 导入曲库 → 为内容 CID 建立
+        // 幂等 fetch 传输（播放器入口）。
+        use app_core::node_service::RAW_CODEC;
+        use jimmusic_protocol::{cid_v1_for_bytes, CatalogAction};
+
+        let (_state_a_holder, _dir_a) = state();
+        let state_a = _state_a_holder.clone();
+
+        // A：发布者身份 + 签名发布（内容存 A 的 CAS）。
+        let content = b"cross-node-content-bytes".to_vec();
+        let content_cid = cid_v1_for_bytes(RAW_CODEC, &content);
+        state_a
+            .node
+            .put_verified(&content_cid, RAW_CODEC, &content, false, false)
+            .unwrap();
+        let passphrase = "cross node pass";
+        let (status, identity) = call(
+            routes(),
+            state_a.clone(),
+            "POST",
+            "/identities/generate",
+            serde_json::json!({"display_name": "Cross Artist", "passphrase": passphrase}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{identity}");
+        let identity_cid = identity["identity_cid"].as_str().unwrap().to_owned();
+        let publisher_id = identity["identity"]["publisher_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let (status, published) = call(
+            routes(),
+            state_a.clone(),
+            "POST",
+            "/publications/sign",
+            serde_json::json!({
+                "request_id": "cross-node-publish",
+                "display_name": "Cross Artist",
+                "passphrase": passphrase,
+                "bundle": identity["encrypted_bundle"].clone(),
+                "operation": "publish",
+                "manifest": {
+                    "schema_version": 1,
+                    "work_id": "cross-work",
+                    "release_id": "cross-release",
+                    "title": "Cross Node Track",
+                    "artists": ["Cross Artist"],
+                    "album": "Cross Album",
+                    "duration_ms": 1000,
+                    "language": "en",
+                    "license": {
+                        "identifier": "CC-BY-4.0",
+                        "allows_redistribution": true
+                    },
+                    "content_labels": ["clean"],
+                    "renditions": [{
+                        "rendition_id": "original",
+                        "content_cid": content_cid,
+                        "container": "flac",
+                        "codec": "flac",
+                        "sample_rate": 44100,
+                        "bit_depth": 24,
+                        "channels": 2,
+                        "channel_layout": "stereo",
+                        "duration_ms": 1000,
+                        "byte_length": content.len(),
+                        "lossless": true,
+                        "original": true,
+                        "streamable": true
+                    }],
+                    "publisher_identity_cid": "filled-by-signer",
+                    "created_at": 1,
+                    "updated_at": 1
+                }
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{published}");
+        let manifest_cid = published["receipt"]["manifest_cid"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+
+        // A：目录 Feed 收录该 Manifest。
+        let maintainer = SigningKey::from_bytes(&[42; 32]);
+        let maintainer_key = hex::encode(maintainer.verifying_key().to_bytes());
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "crossnode.example".into(),
+            name: "CrossNode".into(),
+            description: "cross node feed".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state_a
+            .community
+            .add_source(source.clone(), maintainer_key.clone(), &state_a.node, 0)
+            .unwrap();
+        let mut event = CatalogEventV1 {
+            schema_version: SCHEMA_V1,
+            action: CatalogAction::Include,
+            target_type: "music_manifest".into(),
+            target_cid: manifest_cid.clone(),
+            categories: vec!["music".into()],
+            tags: vec!["cross".into()],
+            annotation: None,
+            sequence: 0,
+            previous_event_cid: None,
+            expires_at: None,
+            issued_at: 2,
+            signature: None,
+        };
+        event.signature = Some(hex::encode(
+            maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        let event_cid = state_a
+            .community
+            .ingest_catalog("crossnode.example", event.clone(), &state_a.node)
+            .unwrap();
+
+        // 模拟 A 的网络可达性：一个 Kubo 兼容网关，从 A 的 CAS 取块。
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway_address = listener.local_addr().unwrap();
+        let gateway_state = state_a.clone();
+        let gateway = axum::serve(
+            listener,
+            axum::Router::new().route(
+                "/api/v0/cat",
+                axum::routing::post(
+                    move |Query(params): Query<std::collections::HashMap<String, String>>| async move {
+                        let cid = params.get("arg").cloned().unwrap_or_default();
+                        match gateway_state.node.cat(&cid) {
+                            Ok(bytes) => (StatusCode::OK, bytes),
+                            Err(_) => (StatusCode::NOT_FOUND, Vec::new()),
+                        }
+                    },
+                ),
+            ),
+        );
+        tokio::spawn(async move {
+            let _ = gateway.await;
+        });
+
+        // B：独立仓库，网关指向 A。
+        let dir_b = tempfile::tempdir().unwrap();
+        let state_b = Arc::new(
+            AppState::new(
+                dir_b.path().to_string_lossy().into_owned(),
+                format!("http://{gateway_address}"),
+            )
+            .unwrap(),
+        );
+
+        // B：导入同一来源（带 catalog_head = Feed 头 CID）并刷新。
+        let mut source_for_b = source.clone();
+        source_for_b.catalog_head = Some(event_cid.clone());
+        source_for_b.signature = None;
+        source_for_b.signature = Some(hex::encode(
+            maintainer
+                .sign(&source_for_b.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        let (status, added) = call(
+            routes(),
+            state_b.clone(),
+            "POST",
+            "/community-sources",
+            serde_json::json!({
+                "manifest": source_for_b,
+                "maintainer_public_key": maintainer_key,
+                "trust_order": 0
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{added}");
+        let (status, refreshed) = call(
+            routes(),
+            state_b.clone(),
+            "POST",
+            "/community-sources/crossnode.example/refresh",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{refreshed}");
+        assert_eq!(refreshed["catalog_ingested"], 1, "{refreshed}");
+        assert_eq!(refreshed["status"], "refreshed");
+
+        // B：关注发布者 → 从 Feed 解析 Manifest 导入曲库（经网关取块）。
+        let response = routes()
+            .with_state(state_b.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/community-sources/follows")
+                    .header("content-type", "application/json")
+                    .header("idempotency-key", "cross-follow")
+                    .body(Body::from(
+                        serde_json::to_vec(&serde_json::json!({
+                            "identity_cid": identity_cid,
+                            "publisher_id": publisher_id,
+                            "display_name": "Cross Artist",
+                        }))
+                        .unwrap(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let (status, tracks) = call(
+            routes(),
+            state_b.clone(),
+            "GET",
+            "/library/tracks",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{tracks}");
+        let tracks = tracks.as_array().unwrap();
+        assert!(
+            tracks.iter().any(|track| {
+                track["title"] == "Cross Node Track" && track["manifest_cid"] == manifest_cid
+            }),
+            "imported track missing: {tracks:?}"
+        );
+
+        // B：为内容 CID 建立幂等 fetch 传输（播放器入口，PLR-007）。
+        let (status, transfer) = call(
+            routes(),
+            state_b.clone(),
+            "POST",
+            "/transfers",
+            serde_json::json!({
+                "request_id": "cross-play",
+                "kind": "fetch",
+                "target_cid": content_cid,
+                "network_policy": {"wifi_only": false, "max_concurrency": 2}
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{transfer}");
+        assert_eq!(transfer["target_cid"], content_cid);
+    }
+
     fn signed_policy_event(
         maintainer: &SigningKey,
         action: jimmusic_protocol::PolicyAction,
