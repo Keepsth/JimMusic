@@ -82,6 +82,8 @@ static LAST_ERROR: Mutex<String> = Mutex::new(String::new());
 static OUTPUT_SESSION: Mutex<String> = Mutex::new(String::new());
 /// App-embedded native IPFS node, shared by desktop and mobile FFI clients.
 static EMBEDDED_NODE: Mutex<Option<Arc<EmbeddedIpfsNode>>> = Mutex::new(None);
+/// 当前节点的应用侧根目录；stop 时用于等待 rust-ipfs 仓库锁真正释放。
+static NODE_ROOT: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// 0=stopped, 1=foreground, 2=background best effort, 3=failed.
 static NODE_LIFECYCLE: AtomicI32 = AtomicI32::new(0);
 static NODE_LAST_ERROR: Mutex<String> = Mutex::new(String::new());
@@ -519,6 +521,7 @@ pub extern "C" fn jimmusic_node_start(root: *const c_char) -> i32 {
     match runtime().block_on(EmbeddedIpfsNode::start(config)) {
         Ok(started) => {
             *node = Some(Arc::new(started));
+            *NODE_ROOT.lock().expect("node root lock poisoned") = Some(root);
             NODE_LAST_ERROR
                 .lock()
                 .expect("node last error lock poisoned")
@@ -569,8 +572,13 @@ pub extern "C" fn jimmusic_node_connect(address: *const c_char) -> i32 {
 }
 
 /// Stops the app-embedded node. It is safe to call repeatedly during teardown.
+///
+/// rust-ipfs 的 `exit_daemon` 返回后，后台任务可能仍短暂持有仓库句柄
+/// （上游 FIXME）；这里等待 `ipfs-repository/repo_lock` 的 OS 锁真正释放，
+/// 保证同进程立即重启（应用前后台生命周期）与 FFI 重启门禁确定成功。
 #[no_mangle]
 pub extern "C" fn jimmusic_node_stop() -> i32 {
+    let root = NODE_ROOT.lock().expect("node root lock poisoned").take();
     let node = EMBEDDED_NODE
         .lock()
         .expect("embedded node lock poisoned")
@@ -582,7 +590,29 @@ pub extern "C" fn jimmusic_node_stop() -> i32 {
         }
     }
     NODE_LIFECYCLE.store(0, Ordering::SeqCst);
+    if let Some(root) = root {
+        let lock_path = root.join("ipfs-repository").join("repo_lock");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while std::time::Instant::now() < deadline && !repo_lock_released(&lock_path) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
     ErrorCode::Ok.as_i32()
+}
+
+/// 以非阻塞独占锁探测仓库锁是否已释放；文件无法打开视为已释放。
+fn repo_lock_released(lock_path: &std::path::Path) -> bool {
+    use fs2::FileExt;
+    let Ok(file) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(lock_path)
+    else {
+        return true;
+    };
+    file.try_lock_exclusive().is_ok()
 }
 
 /// Reads one coherent JSON status snapshot. A null buffer refreshes the cache

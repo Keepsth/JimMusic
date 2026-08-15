@@ -9,11 +9,11 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（218） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成，workspace/all targets/all features |
-| 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId |
+| Rust tests | 通过（225） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点，workspace/all targets/all features |
+| 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（33） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读 |
+| Flutter tests | 通过（37） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -22,6 +22,7 @@
 | 验收报告校验器 | 通过（5） | 自动读取 134 项 P0，拒绝模拟器、P0 unsupported、资源回退超限与不完整报告 |
 | 控制面 SSE 消费 | 通过 | Flutter 消费 `/v1/events`：sequence 缺口与 snapshot.required 触发整体重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询；IO(HttpClient)/Web(fetch 流式) 双传输；13 项测试 |
 | Feed 快照压缩 | 通过 | 社区源快照支持 `Accept-Encoding: gzip`、`x-snapshot-sha256`/字节数完整性头与 32 MiB 未压缩上限（413 结构化错误）；API 测试 |
+| 边下边播流端点 | 通过 | `/v1/transfers/{id}/stream` 跟随 part 增长输出、单范围 Range、终结后尾部交接、整块路径落盘交接与孤儿清理；Flutter 经 just_audio 代理注入鉴权播放并支持 Seek；Rust 4 项 + Flutter 4 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
 | P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 64、部分实现 58、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 

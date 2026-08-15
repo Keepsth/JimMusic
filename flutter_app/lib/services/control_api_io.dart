@@ -121,5 +121,36 @@ class ControlApi {
     }
   }
 
+  /// 打开流式 GET（如传输 part 流），返回原始字节流；非 2xx 时抛
+  /// [ControlApiException]（在流开始前）。流在服务端关闭或断开时结束。
+  Stream<List<int>> getStream(
+    String path, {
+    Map<String, String>? headers,
+  }) async* {
+    final request = await _client.openUrl('GET', Uri.parse('$endpoint$path'));
+    request.followRedirects = false;
+    if (token.trim().isNotEmpty) {
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${token.trim()}',
+      );
+    }
+    (headers ?? const <String, String>{}).forEach(request.headers.set);
+    final response = await request.close().timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        bytes.addAll(chunk);
+        if (bytes.length > 64 * 1024) break;
+      }
+      final text = utf8.decode(bytes, allowMalformed: true);
+      throw ControlApiException(
+        text.trim().isEmpty ? '流式请求失败' : text.trim(),
+        statusCode: response.statusCode,
+      );
+    }
+    yield* response;
+  }
+
   void close() => _client.close(force: true);
 }

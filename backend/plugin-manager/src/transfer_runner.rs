@@ -71,6 +71,8 @@ async fn run(state: Arc<AppState>, task_id: &str) -> Result<(), String> {
     };
 
     if let Ok(bytes) = state.node.cat(&task.target_cid) {
+        // 本地 CAS 命中：整块立即可用；写入 part 文件供流端点做完成交接。
+        let _ = write_stream_part(&state, &task.task_id, &bytes).await;
         state
             .transfers
             .record_progress(
@@ -106,6 +108,9 @@ async fn run(state: Arc<AppState>, task_id: &str) -> Result<(), String> {
             if bytes.len() as u64 > state.node.config().storage_limit_bytes {
                 return Err("P2P block exceeds the configured storage limit".into());
             }
+            // P2P 整块获取：块落地后写入 part 文件，边下边播客户端可随后
+            // 立即开始播放并做完成交接（P2P 字节级渐进流仍是已知限制）。
+            let _ = write_stream_part(&state, &task.task_id, &bytes).await;
             state
                 .transfers
                 .record_progress(
@@ -246,7 +251,20 @@ async fn run(state: Arc<AppState>, task_id: &str) -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
     }
-    let _ = tokio::fs::remove_file(part_path).await;
+    // 保留完整 part 文件：`/v1/transfers/{id}/stream` 在任务终结后仍可用它
+    // 服务尾部字节（DST-007 边下边播完成交接）；孤儿文件由启动/流式清理。
+    Ok(())
+}
+
+/// 把已完整获取的字节写入流端点 part 文件，供边下边播客户端播放、
+/// Seek 与任务终结后的尾部交接（DST-007）。
+async fn write_stream_part(state: &AppState, task_id: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = state.repo_dir.join("transfer-parts");
+    tokio::fs::create_dir_all(&dir).await?;
+    let path = dir.join(format!("{task_id}.part"));
+    let mut file = tokio::fs::File::create(&path).await?;
+    file.write_all(bytes).await?;
+    file.sync_all().await?;
     Ok(())
 }
 

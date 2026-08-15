@@ -94,15 +94,38 @@ class ControlApi {
   /// `snapshot.required` + sequence 缺口检测驱动快照重读。
   Stream<SseEvent> events({int? after}) async* {
     final query = after == null ? '' : '?after=$after';
-    final headers = <String, String>{};
-    if (token.trim().isNotEmpty) {
-      headers['authorization'] = 'Bearer ${token.trim()}';
+    final parser = SseParser();
+    await for (final bytes
+        in _fetchStream('/events$query', const <String, String>{})) {
+      for (final event in parser.add(utf8.decode(bytes, allowMalformed: true))) {
+        yield event;
+      }
     }
+  }
+
+  /// 打开流式 GET，返回原始字节流；非 2xx 时抛 [ControlApiException]。
+  Stream<List<int>> getStream(
+    String path, {
+    Map<String, String>? headers,
+  }) async* {
+    yield* _fetchStream(path, headers ?? const <String, String>{});
+  }
+
+  /// fetch + ReadableStream 的公共实现：携带鉴权头并按块产出字节。
+  Stream<Uint8List> _fetchStream(
+    String path,
+    Map<String, String> extraHeaders,
+  ) async* {
+    final headers = <String, String>{
+      ...extraHeaders,
+      if (token.trim().isNotEmpty)
+        'authorization': 'Bearer ${token.trim()}',
+    };
     web.Response response;
     try {
       response = await web.window
           .fetch(
-            '$endpoint/events$query'.toJS,
+            '$endpoint$path'.toJS,
             web.RequestInit(
               method: 'GET',
               headers: headers.jsify()! as JSObject,
@@ -110,10 +133,10 @@ class ControlApi {
           )
           .toDart;
     } catch (error) {
-      throw ControlApiException('事件流连接失败（请检查 CORS 与地址）：$error');
+      throw ControlApiException('流式连接失败（请检查 CORS 与地址）：$error');
     }
     if (response.status < 200 || response.status >= 300) {
-      String message = '事件流连接失败';
+      String message = '流式请求失败';
       try {
         final text = (await response.text().toDart).toDart;
         if (text.trim().isNotEmpty) message = text.trim();
@@ -122,10 +145,9 @@ class ControlApi {
     }
     final body = response.body;
     if (body == null) {
-      throw const ControlApiException('事件流响应没有 body');
+      throw const ControlApiException('流式响应没有 body');
     }
     final reader = body.getReader() as _SseReader;
-    final parser = SseParser();
     try {
       while (true) {
         final result = await reader.read().toDart;
@@ -133,17 +155,9 @@ class ControlApi {
         final decoded = result.value?.dartify();
         if (decoded is ByteBuffer) {
           final bytes = Uint8List.view(decoded);
-          if (bytes.isNotEmpty) {
-            for (final event
-                in parser.add(utf8.decode(bytes, allowMalformed: true))) {
-              yield event;
-            }
-          }
+          if (bytes.isNotEmpty) yield bytes;
         } else if (decoded is Uint8List && decoded.isNotEmpty) {
-          for (final event
-              in parser.add(utf8.decode(decoded, allowMalformed: true))) {
-            yield event;
-          }
+          yield decoded;
         }
       }
     } finally {

@@ -13,7 +13,7 @@ use app_core::node_service::NodeConfig;
 use app_core::Event;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING};
+use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING, RANGE};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
@@ -21,14 +21,15 @@ use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use futures::StreamExt;
+use futures::{SinkExt, StreamExt};
 use jimmusic_protocol::{
     cid_v1_for, AudioGraphSpecV1, CatalogEventV1, CommunitySourceManifestV1, ErrorEnvelopeV1,
     MaintainerKeyEventV1, ModerationReportV1, MusicManifestV1, NetworkPolicyV1, PluginManifestV1,
     PluginPermission, PublicationEventType, PublicationEventV1, PublisherIdentityV1, TransferKind,
-    SCHEMA_V1,
+    TransferState, SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 
 use crate::lifecycle::InstallContext;
 use crate::state::AppState;
@@ -51,6 +52,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/transfers/{id}/cancel", post(cancel_transfer))
         .route("/transfers/{id}/retry", post(retry_transfer))
         .route("/transfers/{id}/priority", patch(set_transfer_priority))
+        .route("/transfers/{id}/stream", get(stream_transfer))
         .route("/identities", post(register_identity))
         .route("/identities/generate", post(generate_identity))
         .route("/identities/import", post(import_identity))
@@ -702,6 +704,204 @@ async fn set_transfer_priority(
             .set_priority(&id, request.priority)
             .map_err(|error| ApiError::conflict("transfer", "set_priority", error))?,
     ))
+}
+
+/// 边下边播流端点（DST-007）：把传输任务正在写入的 part 文件以有界块流出。
+///
+/// - 支持 `Range: bytes=start-end`（单范围），未知总长用 `*` 表示；
+/// - 下载前沿（EOF）处轮询等待写入者增长文件，不占用无限内存；
+/// - 任务进入终结状态后把已落盘字节服务完并结束；已完成任务可用该端点
+///   继续服务完整 part 直到下次清理（客户端届时应切到已提交的离线源）；
+/// - part 文件按 64 KiB 块读取，路径由 `tr_` + 24 hex 的任务 ID 构成，无穿越风险。
+const TRANSFER_STREAM_CHUNK: usize = 64 * 1024;
+const TRANSFER_STREAM_POLL: Duration = Duration::from_millis(150);
+
+async fn stream_transfer(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Result<Response, ApiError> {
+    state.sweep_transfer_parts(Some(&task_id));
+    let task = state
+        .transfers
+        .get(&task_id)
+        .ok_or_else(|| ApiError::not_found("transfer", "stream", &task_id))?;
+    if matches!(
+        task.state,
+        TransferState::Failed | TransferState::Cancelled | TransferState::IntegrityFailed
+    ) {
+        return Err(ApiError::conflict(
+            "transfer",
+            "stream",
+            format!(
+                "transfer task ended in state {}",
+                transfer_state_name(task.state)
+            ),
+        ));
+    }
+    let range = parse_byte_range(&headers);
+    let (start, end_exclusive) = match range {
+        None => (0u64, None),
+        Some((start, end)) => (start, end.map(|end| end.saturating_add(1))),
+    };
+    if start > state.node.config().storage_limit_bytes {
+        return Err(ApiError::bad_request(
+            "transfer",
+            "stream",
+            "range start beyond storage limit",
+        ));
+    }
+    let part_path = state
+        .repo_dir
+        .join("transfer-parts")
+        .join(format!("{task_id}.part"));
+    let (tx, rx) = futures::channel::mpsc::channel::<Result<Vec<u8>, std::io::Error>>(8);
+    tokio::spawn(part_stream_pump(
+        state.clone(),
+        task_id,
+        part_path,
+        start,
+        end_exclusive,
+        tx,
+    ));
+    let mut builder = Response::builder()
+        .header("accept-ranges", "bytes")
+        .header("content-type", "application/octet-stream")
+        .header("x-jimmusic-stream-source", "transfer-part");
+    if let Some((start, end)) = range {
+        let last = end.map_or_else(|| "*".to_string(), |end| end.to_string());
+        builder = builder
+            .status(StatusCode::PARTIAL_CONTENT)
+            .header("content-range", format!("bytes {start}-{last}/*"));
+        if let Some(end) = end {
+            builder = builder.header("content-length", (end - start + 1).to_string());
+        }
+    }
+    builder
+        .body(Body::from_stream(rx))
+        .map_err(|error| ApiError::bad_request("transfer", "stream", error))
+}
+
+/// 把 part 文件按块推入通道：跟随增长、尊重范围、终结状态后收尾。
+#[allow(clippy::too_many_arguments)]
+async fn part_stream_pump(
+    state: Arc<AppState>,
+    task_id: String,
+    part_path: std::path::PathBuf,
+    start: u64,
+    end_exclusive: Option<u64>,
+    mut tx: futures::channel::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+) {
+    if let Err(error) =
+        part_stream_loop(&state, &task_id, &part_path, start, end_exclusive, &mut tx).await
+    {
+        let _ = tx.send(Err(error)).await;
+    }
+}
+
+async fn part_stream_loop(
+    state: &AppState,
+    task_id: &str,
+    part_path: &std::path::Path,
+    mut offset: u64,
+    end_exclusive: Option<u64>,
+    tx: &mut futures::channel::mpsc::Sender<Result<Vec<u8>, std::io::Error>>,
+) -> std::io::Result<()> {
+    let mut drained = false;
+    loop {
+        if end_exclusive.is_some_and(|end| offset >= end) {
+            return Ok(());
+        }
+        let mut file = match tokio::fs::File::open(part_path).await {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if transfer_stream_active(state, task_id) {
+                    // part 尚未创建或已重建：等待写入者。
+                    tokio::time::sleep(TRANSFER_STREAM_POLL).await;
+                    continue;
+                }
+                return Ok(()); // 任务终结且文件已清理：正常结束
+            }
+            Err(error) => return Err(error),
+        };
+        file.seek(SeekFrom::Start(offset)).await?;
+        let mut buffer = vec![0u8; TRANSFER_STREAM_CHUNK];
+        let read = file.read(&mut buffer).await?;
+        if read == 0 {
+            if transfer_stream_active(state, task_id) {
+                // 下载前沿：文件仍在增长，继续轮询。
+                tokio::time::sleep(TRANSFER_STREAM_POLL).await;
+                continue;
+            }
+            if !drained {
+                // 任务终结：文件不再增长，短暂等待写入者收尾后做最后读取。
+                drained = true;
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                continue;
+            }
+            return Ok(());
+        }
+        buffer.truncate(read);
+        if end_exclusive.is_some_and(|end| offset.saturating_add(read as u64) > end) {
+            buffer.truncate((end_exclusive.unwrap() - offset) as usize);
+        }
+        offset = offset.saturating_add(buffer.len() as u64);
+        if tx.send(Ok(buffer)).await.is_err() {
+            return Ok(()); // 客户端已断开
+        }
+    }
+}
+
+/// 任务是否仍可能让 part 文件继续增长。
+fn transfer_stream_active(state: &AppState, task_id: &str) -> bool {
+    state.transfers.get(task_id).is_some_and(|task| {
+        matches!(
+            task.state,
+            TransferState::Queued
+                | TransferState::Resolving
+                | TransferState::Transferring
+                | TransferState::Paused
+                | TransferState::Verifying
+                | TransferState::Committing
+        )
+    })
+}
+
+/// 解析单范围 `bytes=start-end` / `bytes=start-`；无效或多范围返回 None（整段）。
+fn parse_byte_range(headers: &HeaderMap) -> Option<(u64, Option<u64>)> {
+    let value = headers.get(RANGE)?.to_str().ok()?;
+    let spec = value.strip_prefix("bytes=")?.trim();
+    let mut parts = spec.split(',');
+    let part = parts.next()?.trim();
+    if parts.next().is_some() {
+        return None;
+    }
+    let (start_text, end_text) = part.split_once('-')?;
+    let start: u64 = start_text.parse().ok()?;
+    let end = if end_text.is_empty() {
+        None
+    } else {
+        Some(end_text.parse().ok()?)
+    };
+    if end.is_some_and(|end| end < start) {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn transfer_state_name(state: TransferState) -> &'static str {
+    match state {
+        TransferState::Queued => "queued",
+        TransferState::Resolving => "resolving",
+        TransferState::Transferring => "transferring",
+        TransferState::Paused => "paused",
+        TransferState::Verifying => "verifying",
+        TransferState::Committing => "committing",
+        TransferState::Completed => "completed",
+        TransferState::Failed => "failed",
+        TransferState::Cancelled => "cancelled",
+        TransferState::IntegrityFailed => "integrity_failed",
+    }
 }
 
 async fn register_identity(
@@ -2511,6 +2711,7 @@ mod tests {
     use axum::body::Body;
     use ed25519_dalek::{Signer, SigningKey};
     use http_body_util::BodyExt;
+    use std::collections::BTreeMap;
     use tower::ServiceExt;
 
     fn state() -> (Arc<AppState>, tempfile::TempDir) {
@@ -2621,6 +2822,171 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         let (_, second) = call(routes(), state, "POST", "/transfers", body).await;
         assert_eq!(first["task_id"], second["task_id"]);
+    }
+
+    fn streaming_task(
+        state: &Arc<AppState>,
+        request_id: &str,
+        target: &str,
+    ) -> jimmusic_protocol::TransferTaskV1 {
+        let task = state
+            .transfers
+            .create(
+                request_id,
+                TransferKind::Download,
+                target.into(),
+                None,
+                NetworkPolicyV1 {
+                    wifi_only: false,
+                    cellular_limit_bytes: None,
+                    max_concurrency: 2,
+                },
+            )
+            .unwrap();
+        state
+            .transfers
+            .record_progress(&task.task_id, 0, None, 0, vec!["test".into()])
+            .unwrap();
+        task
+    }
+
+    #[tokio::test]
+    async fn transfer_stream_follows_growth_and_ends_on_terminal_state() {
+        let (state, _dir) = state();
+        let task = streaming_task(&state, "stream-req-1", "bafy-stream-target");
+        let parts = state.repo_dir.join("transfer-parts");
+        std::fs::create_dir_all(&parts).unwrap();
+        let part = parts.join(format!("{}.part", task.task_id));
+        std::fs::write(&part, b"0123456789").unwrap();
+
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri(format!("/transfers/{}/stream", task.task_id))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["accept-ranges"], "bytes");
+        assert_eq!(
+            response.headers()["x-jimmusic-stream-source"],
+            "transfer-part"
+        );
+        let mut body = response.into_body().into_data_stream();
+
+        let first = tokio::time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .expect("first chunk")
+            .expect("stream open")
+            .expect("chunk ok");
+        assert_eq!(&first[..], b"0123456789");
+
+        // 文件增长：流应跟随输出新增字节。
+        std::fs::write(&part, b"0123456789abcdefghij").unwrap();
+        let second = tokio::time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .expect("second chunk")
+            .expect("stream open")
+            .expect("chunk ok");
+        assert_eq!(&second[..], b"abcdefghij");
+
+        // 任务终结（失败）：已落盘字节服务完后流结束。
+        state
+            .transfers
+            .fail(
+                &task.task_id,
+                TransferState::Failed,
+                ErrorEnvelopeV1 {
+                    schema_version: SCHEMA_V1,
+                    code: "test_failure".into(),
+                    message: "injected".into(),
+                    subsystem: "transfer".into(),
+                    operation: "test".into(),
+                    retryable: false,
+                    unsupported_reason: None,
+                    details: BTreeMap::new(),
+                    request_id: None,
+                    causes: Vec::new(),
+                },
+            )
+            .unwrap();
+        let end = tokio::time::timeout(Duration::from_secs(3), body.next())
+            .await
+            .expect("stream should end");
+        assert!(end.is_none(), "terminal state should close the stream");
+    }
+
+    #[tokio::test]
+    async fn transfer_stream_honors_single_byte_range() {
+        use http_body_util::BodyExt;
+
+        let (state, _dir) = state();
+        let task = streaming_task(&state, "stream-req-2", "bafy-stream-range");
+        let parts = state.repo_dir.join("transfer-parts");
+        std::fs::create_dir_all(&parts).unwrap();
+        std::fs::write(
+            parts.join(format!("{}.part", task.task_id)),
+            b"0123456789abcdef",
+        )
+        .unwrap();
+
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri(format!("/transfers/{}/stream", task.task_id))
+                    .header("range", "bytes=2-5")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(response.headers()["content-range"], "bytes 2-5/*");
+        assert_eq!(response.headers()["content-length"], "4");
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&bytes[..], b"2345");
+    }
+
+    #[tokio::test]
+    async fn transfer_stream_rejects_terminally_failed_tasks() {
+        let (state, _dir) = state();
+        let task = streaming_task(&state, "stream-req-3", "bafy-stream-dead");
+        state
+            .transfers
+            .fail(
+                &task.task_id,
+                TransferState::Failed,
+                ErrorEnvelopeV1 {
+                    schema_version: SCHEMA_V1,
+                    code: "test_failure".into(),
+                    message: "injected".into(),
+                    subsystem: "transfer".into(),
+                    operation: "test".into(),
+                    retryable: false,
+                    unsupported_reason: None,
+                    details: BTreeMap::new(),
+                    request_id: None,
+                    causes: Vec::new(),
+                },
+            )
+            .unwrap();
+        let (status, body) = call(
+            routes(),
+            state,
+            "GET",
+            &format!("/transfers/{}/stream", task.task_id),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["subsystem"], "transfer");
+        assert!(body["message"].as_str().unwrap().contains("failed"));
     }
 
     #[tokio::test]

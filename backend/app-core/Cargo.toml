@@ -16,6 +16,9 @@ jimmusic-protocol = { path = "../protocol" }
 # 动态库加载
 libloading = "0.8"
 
+# 节点仓库锁探测（同进程重启前的释放等待）
+fs2 = "0.4"
+
 # 异步运行时与调度
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 futures = "0.3"

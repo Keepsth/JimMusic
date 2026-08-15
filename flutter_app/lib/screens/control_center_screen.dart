@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../providers/audio_output_provider.dart';
 import '../providers/control_plane_provider.dart';
+import '../providers/music_player_provider.dart';
 
 class ControlCenterScreen extends StatelessWidget {
   const ControlCenterScreen({super.key});
@@ -556,6 +557,16 @@ class _TransfersTab extends StatelessWidget {
                       ', ',
                     );
                 final error = task['error'] as Map<String, dynamic>?;
+                final destination = '${task['destination'] ?? ''}';
+                final streamMime = _audioMimeForPath(destination);
+                final canStream =
+                    streamMime != null &&
+                    !const {
+                      'completed',
+                      'failed',
+                      'cancelled',
+                      'integrity_failed',
+                    }.contains(state);
                 return Card(
                   margin: const EdgeInsets.symmetric(
                     horizontal: 12,
@@ -597,12 +608,28 @@ class _TransfersTab extends StatelessWidget {
                             id,
                             int.parse(action.substring('priority:'.length)),
                           );
+                        } else if (action == 'stream') {
+                          // 边下边播（DST-007）：交给播放器经传输流端点播放。
+                          context
+                              .read<MusicPlayerProvider>()
+                              .playTransferStream(
+                                taskId: id,
+                                endpoint: control.endpoint,
+                                token: control.token,
+                                mimeType: streamMime,
+                                title: destination.split('/').last,
+                              );
                         } else {
                           control.transferAction(id, action);
                         }
                       },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
+                      itemBuilder: (_) => [
+                        if (canStream)
+                          const PopupMenuItem(
+                            value: 'stream',
+                            child: Text('边下边播'),
+                          ),
+                        const PopupMenuItem(
                           value: 'priority:10',
                           child: Text('设为高优先级'),
                         ),
@@ -1917,4 +1944,16 @@ String _bytes(dynamic value) {
   }
   if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(2)} KiB';
   return '${bytes.toInt()} B';
+}
+
+/// 从保存路径判断是否是可边下边播的音频文件，返回对应 MIME。
+String? _audioMimeForPath(String path) {
+  final lower = path.toLowerCase();
+  if (lower.endsWith('.mp3')) return 'audio/mpeg';
+  if (lower.endsWith('.m4a')) return 'audio/mp4';
+  if (lower.endsWith('.aac')) return 'audio/aac';
+  if (lower.endsWith('.flac')) return 'audio/flac';
+  if (lower.endsWith('.wav')) return 'audio/wav';
+  if (lower.endsWith('.ogg') || lower.endsWith('.opus')) return 'audio/ogg';
+  return null;
 }

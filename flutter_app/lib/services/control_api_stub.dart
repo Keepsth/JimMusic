@@ -15,5 +15,9 @@ class ControlApi {
   Future<dynamic> patch(String path, Object? body) async => _unsupported();
   Future<dynamic> delete(String path) async => _unsupported();
   Stream<SseEvent> events({int? after}) async* {}
+  Stream<List<int>> getStream(
+    String path, {
+    Map<String, String>? headers,
+  }) async* {}
   void close() {}
 }

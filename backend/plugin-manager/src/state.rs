@@ -17,10 +17,49 @@ use app_core::{EventBus, IpfsClient};
 use jimmusic_protocol::{
     AudioEdgeSpecV1, AudioFormatSpecV1, AudioGraphMode, AudioGraphSpecV1, AudioMediaType,
     AudioNodeSpecV1, AudioNodeType, AudioPortSpecV1, CommunitySourceManifestV1, NodeFailurePolicy,
-    SCHEMA_V1,
+    TransferState, SCHEMA_V1,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+
+/// 清理 `transfer-parts/` 中的孤儿 part 文件：任务不存在或已终结（无法继续
+/// 流式播放）的文件。`keep_task_id` 用于流端点启动时的同步清理，避免误删
+/// 当前正在被请求的文件。完整 part 文件由任务成功路径保留，供
+/// `/v1/transfers/{id}/stream` 在任务终结后完成尾部交接（DST-007）。
+pub fn sweep_transfer_parts(
+    repo_dir: &Path,
+    transfers: &TransferService,
+    keep_task_id: Option<&str>,
+) {
+    let dir = repo_dir.join("transfer-parts");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(task_id) = name.strip_suffix(".part") else {
+            continue;
+        };
+        if keep_task_id == Some(task_id) {
+            continue;
+        }
+        let keep = transfers.get(task_id).is_some_and(|task| {
+            !matches!(
+                task.state,
+                TransferState::Completed
+                    | TransferState::Failed
+                    | TransferState::Cancelled
+                    | TransferState::IntegrityFailed
+            )
+        });
+        if !keep {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+}
 
 /// 插件来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +137,13 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// 清理孤儿 transfer part 文件，保留 [keep_task_id] 对应的文件。
+    /// 由 `/v1/transfers/{id}/stream` 启动时调用，避免已完成任务残留的
+    /// part 文件无限积累。
+    pub fn sweep_transfer_parts(&self, keep_task_id: Option<&str>) {
+        sweep_transfer_parts(&self.repo_dir, &self.transfers, keep_task_id);
+    }
+
     /// 创建状态并确保仓库目录存在。
     pub fn new(repo_dir: String, ipfs_gateway: String) -> std::io::Result<Self> {
         let repo = PathBuf::from(repo_dir);
@@ -121,6 +167,7 @@ impl AppState {
         let events = EventBus::new(2_048);
         let transfers = TransferService::open_with_bus(repo.join("transfers.json"), events.clone())
             .map_err(std::io::Error::other)?;
+        sweep_transfer_parts(&repo, &transfers, None);
         let publications = PublicationService::open(repo.join("publications.json"))
             .map_err(std::io::Error::other)?;
         let community = CommunitySourceService::open(repo.join("community.json"))

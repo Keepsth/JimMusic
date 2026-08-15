@@ -1073,7 +1073,7 @@ HTTP 控制面统一使用 /v1，默认仅绑定回环地址并受 Bearer token 
 | 插件 ABI       | Audio ABI v2、Manifest、权限/依赖/配置/制品 DTO 与 legacy 输出适配存在   | 没有真正 WASM runtime/capability 沙箱和完整声明式 ControlPanel     |
 | 插件管理器     | 强制签名/CID/摘要、预检、事务安装、持久状态、启停、回滚、隔离、安全模式  | 远端目录与撤销 Feed、运行时权限强制和独立进程隔离不完整            |
 | 节点/IPFS      | 内置本地 verified CAS、稳定 PeerId、Pin/配额/诊断和持久传输任务          | 网络获取仍依赖 Kubo HTTP 网关；没有 Helia/libp2p/UnixFS/内容路由   |
-| 音乐分发       | Manifest/rendition、签名 Feed、原子下载、持久优先级调度与任务恢复        | 缺跨 P2P 节点发布播放、外部 Pin service 和完整发布向导             |
+| 音乐分发       | Manifest/rendition、签名 Feed、原子下载、持久优先级调度与任务恢复        | 缺另一节点从 Feed 解析到播放的 UI 闭环、外部 Pin service 和完整发布向导；边下边播已落地（传输 part 流端点 + 播放器接入），七端实测待补 |
 | 社区发现       | 双 Feed、可禁用签名启动源、URI/CID/IPNS 导入、换钥/撤销与加密举报        | 启动源尚无远端 Feed；缺相机扫码；Feed 快照/压缩已落地（紧凑快照 + gzip + 摘要 + 上限），远端实测待补                   |
 | 音乐目录       | 后端持久曲库/扫描/缺失标记/歌单/会话和 Flutter 本地曲库均可用            | 两端尚未统一；无目录监控、迁移和 Web 持久目录闭环                  |
 | CI/发布        | 七端同提交 gate、签名、摘要、SBOM、provenance 和逐 P0 追踪已配置         | 尚无受控 tag 产物、Harmony runner、硬件实验室和七端 RC 实际证据    |

@@ -9,6 +9,7 @@ import '../models/playlist.dart';
 import '../services/media_scanner_service.dart';
 import '../services/persistence_service.dart';
 import '../services/rust_bridge.dart';
+import '../services/transfer_stream_audio_source.dart';
 
 enum PlayerState { stopped, playing, paused, buffering }
 
@@ -295,7 +296,6 @@ class MusicPlayerProvider extends ChangeNotifier {
       );
       return;
     }
-
     _playbackError = null;
     _playerState = PlayerState.buffering;
     notifyListeners();
@@ -331,6 +331,51 @@ class MusicPlayerProvider extends ChangeNotifier {
     }
 
     _failPlayback(_playbackError ?? '没有可用的真实音源或音频输出，未开始播放');
+  }
+
+  /// 边下边播（DST-007）：经控制面 `/v1/transfers/{id}/stream` 播放正在
+  /// 下载的音频。服务端跟随 part 文件增长推送字节，播放器按需用 Range
+  /// 请求 Seek；任务终结后流正常结束。会话快照不保存该伪曲目（重启后
+  /// 由传输列表重新发起）。
+  Future<void> playTransferStream({
+    required String taskId,
+    required String endpoint,
+    String token = '',
+    String? mimeType,
+    String? title,
+  }) async {
+    await stop();
+    _bridgeActive = false;
+    _playbackError = null;
+    _playerState = PlayerState.buffering;
+    final shortId = taskId.length > 8 ? taskId.substring(0, 8) : taskId;
+    _currentMusic = Music(
+      id: 'transfer-$taskId',
+      title: title ?? '网络串流 $shortId…',
+      artist: 'IPFS 边下边播',
+      album: '',
+      duration: '',
+      sourceType: TrackSourceType.ipfs,
+      availability: TrackAvailability.available,
+      mimeType: mimeType,
+    );
+    _playlist = [_currentMusic!];
+    _currentIndex = 0;
+    _currentPosition = 0.0;
+    notifyListeners();
+
+    final source = transferStreamAudioSource(
+      endpoint: endpoint,
+      token: token,
+      taskId: taskId,
+    );
+    try {
+      final audio = await _ensureAudio();
+      await audio.setAudioSource(source);
+      unawaited(audio.play());
+    } catch (error) {
+      _failPlayback('边下边播失败：$error');
+    }
   }
 
   Future<void> pause() async {
