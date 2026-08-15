@@ -36,6 +36,12 @@ class _FakeControlApi extends ControlApi {
   }
 
   @override
+  Future<dynamic> put(String path, Object? body) async {
+    mutations.add('PUT $path $body');
+    return {};
+  }
+
+  @override
   Future<dynamic> delete(String path) async {
     mutations.add('DELETE $path');
     return {};
@@ -260,6 +266,19 @@ void main() {
       );
       await _pumpEventLoop();
       expect(fake.requests, contains('/health'));
+    });
+
+    test('音乐目录查询与设置走对应端点', () async {
+      fake.responses['/library/music-directory'] = {'directory': '/music'};
+      await provider.refresh();
+      final directory = await provider.musicDirectory();
+      expect(directory, '/music');
+      await provider.setMusicDirectory('/music/new');
+      expect(
+        fake.mutations.join('\n'),
+        contains('PUT /library/music-directory'),
+      );
+      expect(fake.mutations.join('\n'), contains('/music/new'));
     });
 
     test('策略查询与本地覆盖走对应端点', () async {

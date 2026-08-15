@@ -8,6 +8,7 @@ import 'package:just_audio/just_audio.dart';
 import '../models/music.dart';
 import '../models/playback_mode.dart';
 import '../models/playlist.dart';
+import '../services/control_api.dart';
 import '../services/media_scanner_service.dart';
 import '../services/persistence_service.dart';
 import '../services/rust_bridge.dart';
@@ -482,6 +483,76 @@ class MusicPlayerProvider extends ChangeNotifier {
       unawaited(audio.play());
     } catch (error) {
       _failPlayback('边下边播失败：$error');
+    }
+  }
+
+  /// 网络曲目接入同一播放入口（PLR-007/DST-003）：按内容 CID 建立幂等
+  /// fetch 传输任务，随后经传输流端点边下边播。已在本地文件/缓存的曲目
+  /// 应继续走 [play]。
+  Future<void> playNetworkTrack(
+    Music music, {
+    required String endpoint,
+    String token = '',
+  }) async {
+    final cid = music.renditionCid ?? music.manifestCid;
+    if (cid == null || cid.isEmpty) {
+      _failPlayback('网络曲目缺少内容 CID');
+      return;
+    }
+    final requestId = 'play-${music.id}';
+    final api = ControlApi(endpoint: endpoint, token: token);
+    try {
+      final created = await api.post(
+        '/transfers',
+        {
+          'request_id': requestId,
+          'kind': 'fetch',
+          'target_cid': cid,
+          'network_policy': {'wifi_only': false, 'max_concurrency': 2},
+        },
+        {'idempotency-key': requestId},
+      );
+      final taskId = created is Map<String, dynamic>
+          ? created['task_id'] as String?
+          : null;
+      if (taskId == null || taskId.isEmpty) {
+        _failPlayback('无法建立网络传输任务');
+        return;
+      }
+      await playTransferStream(
+        taskId: taskId,
+        endpoint: endpoint,
+        token: token,
+        mimeType: _mimeForCodec(music.codec),
+        title: music.title,
+      );
+    } catch (error) {
+      _failPlayback('无法开始网络播放：$error');
+    } finally {
+      api.close();
+    }
+  }
+
+  /// 编解码器名 → MIME（传输流端点的内容类型提示）。
+  String? _mimeForCodec(String? codec) {
+    switch ((codec ?? '').toLowerCase()) {
+      case 'mp3':
+        return 'audio/mpeg';
+      case 'aac':
+        return 'audio/aac';
+      case 'm4a':
+      case 'alac':
+        return 'audio/mp4';
+      case 'flac':
+        return 'audio/flac';
+      case 'wav':
+        return 'audio/wav';
+      case 'opus':
+      case 'vorbis':
+      case 'ogg':
+        return 'audio/ogg';
+      default:
+        return null;
     }
   }
 

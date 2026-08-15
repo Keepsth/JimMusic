@@ -482,6 +482,33 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// UI-009：当前音乐目录。
+  Future<String?> musicDirectory() async {
+    final api = _makeApi();
+    try {
+      final result = _map(await api.get('/library/music-directory'));
+      return result?['directory'] as String?;
+    } catch (error) {
+      _error = error.toString();
+      _errorDetail = error;
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
+
+  /// UI-009：设置音乐目录（“仅切换”语义；复制/移动选项未实现并在 UI 明示）。
+  Future<void> setMusicDirectory(String directory) async {
+    final requestId = 'music-dir-${DateTime.now().microsecondsSinceEpoch}';
+    await _mutate(
+      (api) => api.put(
+        '/library/music-directory',
+        {'request_id': requestId, 'directory': directory.trim()},
+      ),
+    );
+  }
+
   /// PLG-014/UI-101：插件的声明式配置 Schema。
   Future<Map<String, dynamic>?> pluginConfigSchema(String id) async {
     final api = _makeApi();

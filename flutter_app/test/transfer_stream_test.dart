@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/models/music.dart';
 import 'package:flutter_app/providers/music_player_provider.dart';
 import 'package:flutter_app/services/transfer_stream_audio_source.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -77,6 +79,61 @@ void main() {
       expect(provider.playbackError, isNull);
       expect(received, contains('/v1/transfers/tr_live/stream auth=Bearer tok'));
       provider.dispose();
+    });
+
+    test('网络曲目经传输任务边下边播（PLR-007）', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final received = <String>[];
+      server.listen((request) async {
+        final body = await utf8.decoder.bind(request).join();
+        if (request.method == 'POST' && request.uri.path == '/v1/transfers') {
+          received.add('POST /v1/transfers $body');
+          request.response.statusCode = 200;
+          request.response.write('{"task_id":"tr_play"}');
+          request.response.close();
+        } else if (request.uri.path == '/v1/transfers/tr_play/stream') {
+          received.add('GET /v1/transfers/tr_play/stream');
+          request.response.statusCode = 200;
+          request.response.add([1, 2, 3]);
+          request.response.close();
+        } else {
+          request.response.statusCode = 404;
+          request.response.close();
+        }
+      });
+      addTearDown(() => server.close(force: true));
+
+      final provider = MusicPlayerProvider();
+      addTearDown(provider.dispose);
+      await provider.ready;
+      await provider.playNetworkTrack(
+        Music(
+          id: 'jm_net1',
+          title: 'Net',
+          artist: 'A',
+          album: '',
+          duration: '',
+          sourceType: TrackSourceType.ipfs,
+          availability: TrackAvailability.available,
+          renditionCid: 'bafytest',
+          codec: 'flac',
+        ),
+        endpoint: 'http://127.0.0.1:${server.port}/v1',
+        token: 'tok',
+      );
+      expect(
+        received,
+        containsAll([
+          'GET /v1/transfers/tr_play/stream',
+        ]),
+      );
+      expect(
+        received.firstWhere((entry) => entry.startsWith('POST /v1/transfers')),
+        contains('bafytest'),
+      );
+      expect(provider.currentMusic?.id, 'transfer-tr_play');
+      expect(provider.playerState, PlayerState.buffering);
+      expect(provider.playbackError, isNull);
     });
 
     test('控制面拒绝时经播放事件给出结构化失败且不伪装播放', () async {

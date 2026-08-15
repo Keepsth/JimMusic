@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../widgets/music_list_item.dart';
 import '../widgets/now_playing_bar.dart';
@@ -165,7 +166,27 @@ class LibraryTab extends StatelessWidget {
                       isPlaying:
                           player.currentMusic?.id == music.id &&
                           player.isPlaying,
-                      onTap: () => player.play(music),
+                      // PLR-007：网络曲目（Manifest/社区，无本地路径）与
+                      // 本地曲目走同一播放入口——按内容 CID 建传输任务并边下边播。
+                      onTap: () {
+                        final control =
+                            context.read<ControlPlaneProvider>();
+                        final hasLocalPath =
+                            music.filePath != null &&
+                            music.filePath!.isNotEmpty;
+                        final hasCid =
+                            music.renditionCid != null ||
+                            music.manifestCid != null;
+                        if (!hasLocalPath && hasCid && control.connected) {
+                          player.playNetworkTrack(
+                            music,
+                            endpoint: control.endpoint,
+                            token: control.token,
+                          );
+                        } else {
+                          player.play(music);
+                        }
+                      },
                     );
                   },
                 ),

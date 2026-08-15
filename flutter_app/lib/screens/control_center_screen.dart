@@ -588,9 +588,72 @@ class _NodeTab extends StatelessWidget {
 }
 
 /// 曲库统一同步页（PLR-001/PLR-002/PLR-009/UI-002）。
-class _LibraryTab extends StatelessWidget {
+class _LibraryTab extends StatefulWidget {
   final ControlPlaneProvider control;
   const _LibraryTab(this.control);
+
+  @override
+  State<_LibraryTab> createState() => _LibraryTabState();
+}
+
+class _LibraryTabState extends State<_LibraryTab> {
+  ControlPlaneProvider get control => widget.control;
+  String? _musicDirectory;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDirectory();
+  }
+
+  Future<void> _loadDirectory() async {
+    final directory = await control.musicDirectory();
+    if (mounted) {
+      setState(() => _musicDirectory = directory);
+    }
+  }
+
+  Future<void> _setMusicDirectory(BuildContext context) async {
+    final controller = TextEditingController(text: _musicDirectory ?? '');
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('设置音乐目录'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: '绝对路径（仅切换，不复制/移动文件）',
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                '“复制”与“移动”选项尚未实现；切换后旧目录中的文件不会自动移动。',
+                style: TextStyle(fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    if (accepted != true) return;
+    await control.setMusicDirectory(controller.text);
+    await _loadDirectory();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -633,6 +696,22 @@ class _LibraryTab extends StatelessWidget {
                 '共 ${player.library.length} 首'
                 '（本地文件 $localFiles · 网络内容 $network）'
                 '\n歌单 ${player.playlists.length} · 收藏 ${player.favoriteIds.length}',
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.folder),
+              title: Text('音乐目录：${_musicDirectory ?? '未设置'}'),
+              subtitle: const Text(
+                '设置后后端扫描/曲库以该目录为默认；当前仅支持“仅切换”'
+                '（复制/移动选项未实现）。',
+              ),
+              trailing: IconButton(
+                tooltip: '设置音乐目录',
+                onPressed: () => _setMusicDirectory(context),
+                icon: const Icon(Icons.edit),
               ),
             ),
           ),
