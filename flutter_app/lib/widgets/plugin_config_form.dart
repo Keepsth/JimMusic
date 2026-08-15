@@ -163,10 +163,13 @@ class _PluginConfigFormState extends State<PluginConfigForm> {
         );
       case 'string':
       default:
+        // PLG-011：敏感字段（如口令/令牌）默认遮罩显示。
+        final sensitive = property['sensitive'] == true;
         return TextFormField(
           initialValue: '${_values[key] ?? ''}',
+          obscureText: sensitive,
           decoration: InputDecoration(
-            labelText: title,
+            labelText: sensitive ? '$title（敏感）' : title,
             helperText: description == null ? null : '$description',
           ),
           onChanged: (text) => _update(key, text),

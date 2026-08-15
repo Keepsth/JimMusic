@@ -743,6 +743,37 @@ fn spawn_remote_pins(state: &Arc<AppState>, cid: String) {
     });
 }
 
+/// NOD-006/DST-010 自动复刻策略：发布成功后把各 rendition 的内容 CID
+/// 建为幂等 Pin 传输任务（本地复刻）并推送第三方 Pin 服务（用户显式开启）。
+fn replicate_publication(state: &Arc<AppState>, manifest: Option<&MusicManifestV1>) {
+    let Some(manifest) = manifest else {
+        return;
+    };
+    if !state.node.config().auto_replicate_published {
+        return;
+    }
+    for rendition in &manifest.renditions {
+        let cid = rendition.content_cid.clone();
+        if let Ok(task) = state.transfers.create_with_priority(
+            &format!("replicate-{}-{cid}", manifest.work_id),
+            TransferKind::Pin,
+            cid.clone(),
+            None,
+            NetworkPolicyV1 {
+                wifi_only: false,
+                cellular_limit_bytes: None,
+                max_concurrency: 2,
+            },
+            0,
+        ) {
+            if task.state == jimmusic_protocol::TransferState::Queued {
+                crate::transfer_runner::spawn(state.clone(), task.task_id);
+            }
+        }
+        spawn_remote_pins(state, cid);
+    }
+}
+
 /// PLG-009：把当前生效的 Revoke 策略应用到已安装插件。
 /// 目标 CID 与各版本 manifest CID 匹配；撤销后记录进入 Revoked 状态并推送事件。
 /// 幂等：重复调用不会重复产生副作用。
@@ -1178,6 +1209,7 @@ async fn publish(
     Json(request): Json<PublishRequest>,
 ) -> ApiResult<app_core::publication_service::PublicationReceipt> {
     let request_id = request_id(&headers, request.request_id.as_deref())?;
+    let manifest_for_replication = request.manifest.clone();
     let fingerprint = crate::state::sha256_hex(
         &serde_json::to_vec(&(&request.manifest, &request.event)).unwrap_or_default(),
     );
@@ -1196,6 +1228,8 @@ async fn publish(
         if let Some(manifest_cid) = receipt.manifest_cid.clone() {
             spawn_remote_pins(&state, manifest_cid);
         }
+        // DST-010：按配置自动复刻各 rendition 内容。
+        replicate_publication(&state, Some(&manifest_for_replication));
     }
     Ok(Json(receipt))
 }
@@ -1345,6 +1379,7 @@ async fn sign_publication(
         .map_err(|error| map_idempotency("publication", "sign", error))?;
     if !replayed {
         publish_publication_event(&state, &response.receipt);
+        replicate_publication(&state, response.signed_manifest.as_ref());
     }
     Ok(Json(response))
 }
@@ -3629,6 +3664,110 @@ mod tests {
         assert_eq!(first, replay);
         let publisher_id = first["receipt"]["publisher_id"].as_str().unwrap();
         assert_eq!(state.publications.feed(publisher_id).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn published_renditions_are_auto_replicated_when_enabled() {
+        let (state, _dir) = state();
+        // 开启自动复刻策略。
+        let mut config = node_config_body(None);
+        config["auto_replicate_published"] = serde_json::json!(true);
+        let (status, _) = call(routes(), state.clone(), "PUT", "/node/config", config).await;
+        assert_eq!(status, StatusCode::OK);
+
+        let passphrase = "correct horse battery";
+        let (status, identity) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/identities/generate",
+            serde_json::json!({"display_name": "Artist", "passphrase": passphrase}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let request = serde_json::json!({
+            "request_id": "replicated-publication-1",
+            "display_name": "Artist",
+            "passphrase": passphrase,
+            "bundle": identity["encrypted_bundle"].clone(),
+            "operation": "publish",
+            "manifest": {
+                "schema_version": 1,
+                "work_id": "replicated-work",
+                "release_id": "replicated-release",
+                "title": "Replicated track",
+                "artists": ["Artist"],
+                "album": "Album",
+                "duration_ms": 1000,
+                "language": "en",
+                "license": {"identifier": "CC-BY-4.0", "allows_redistribution": true},
+                "content_labels": ["clean"],
+                "renditions": [
+                    {
+                        "rendition_id": "original",
+                        "content_cid": "bafyreplica",
+                        "container": "flac",
+                        "codec": "flac",
+                        "sample_rate": 44100,
+                        "bit_depth": 24,
+                        "channels": 2,
+                        "channel_layout": "stereo",
+                        "duration_ms": 1000,
+                        "byte_length": 10,
+                        "lossless": true,
+                        "original": true,
+                        "streamable": true
+                    },
+                    {
+                        "rendition_id": "opus",
+                        "content_cid": "bafyreplica2",
+                        "container": "ogg",
+                        "codec": "opus",
+                        "sample_rate": 48000,
+                        "bit_depth": 16,
+                        "channels": 2,
+                        "channel_layout": "stereo",
+                        "duration_ms": 1000,
+                        "byte_length": 5,
+                        "lossless": false,
+                        "original": false,
+                        "streamable": true
+                    }
+                ],
+                "publisher_identity_cid": "filled-by-signer",
+                "created_at": 1,
+                "updated_at": 1
+            }
+        });
+        let (status, response) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/publications/sign",
+            request,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{response}");
+
+        // 每个 rendition 内容 CID 都有幂等 Pin 传输任务（自动复刻）。
+        let (status, transfers) =
+            call(routes(), state, "GET", "/transfers", serde_json::json!({})).await;
+        assert_eq!(status, StatusCode::OK);
+        let pin_targets: Vec<String> = transfers
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|task| task["kind"] == "pin")
+            .map(|task| task["target_cid"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            pin_targets.contains(&"bafyreplica".to_string()),
+            "{transfers}"
+        );
+        assert!(
+            pin_targets.contains(&"bafyreplica2".to_string()),
+            "{transfers}"
+        );
     }
 
     #[tokio::test]

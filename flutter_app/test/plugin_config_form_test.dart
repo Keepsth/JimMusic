@@ -38,6 +38,36 @@ void main() {
     });
   });
 
+  testWidgets('敏感字段遮罩显示（PLG-011）', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: PluginConfigForm(
+            schema: {
+              'properties': {
+                'api_token': {
+                  'type': 'string',
+                  'default': 'secret-value',
+                  'sensitive': true,
+                },
+              },
+            },
+            initial: const {},
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    final field = tester.widget<TextField>(
+      find.descendant(
+        of: find.byType(TextFormField),
+        matching: find.byType(TextField),
+      ),
+    );
+    expect(field.obscureText, isTrue);
+    expect(find.textContaining('敏感'), findsOneWidget);
+  });
+
   testWidgets('按 Schema 渲染开关/枚举/滑杆/文本框并回传更新', (tester) async {
     Map<String, dynamic>? latest;
     await tester.pumpWidget(

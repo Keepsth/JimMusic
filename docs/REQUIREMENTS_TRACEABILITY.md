@@ -66,7 +66,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-008 | 本机通过 | service owner 注册冲突与微内核保留服务拒绝测试 | 尚无跨进程 service host |
 | PLG-009 | 本机通过 | revoked manifest 在 preflight 被拒绝，可停用/隔离；社区 Policy Revoke 事件在摄取与刷新后自动应用：`active_revoke_targets` 收集生效（未过期、来源启用）目标，`revoke_release` 按 manifest CID 匹配已安装版本并置 Revoked + 推送 `plugin.state_changed`，幂等；API 测试 | 撤销 Feed 快照防回滚与七端交互待验收 |
 | PLG-010 | 本机通过 | 连续失败、quarantine/safe mode；Wasmtime fuel、内存/表限制和 trap 测试 | 社区原生插件仍需独立进程超时探针 |
-| PLG-011 | 部分实现 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON | 敏感字段控件和完整迁移策略未实现 |
+| PLG-011 | 部分实现 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON；声明式控件；敏感字段（`sensitive: true`）遮罩显示并标注（敏感）；1 项测试 | 完整状态 Schema 迁移策略未实现 |
 | PLG-012 | 本机通过 | platform/arch/core ABI/依赖/冲突/权限在下载前 preflight | 七端目录数据待实际验证 |
 | PLG-013 | 本机通过 | lifecycle state、错误、版本、信任、权限可观测；安装日志持久化中间态（downloading/verifying/staging/committing），失败保留结构化错误、崩溃中断重启标记 interrupted（≤64 条滚动），`GET /v1/plugins/install-journal` 与插件页展示；生命周期测试 2 项 | 七端交互与日志展示待验收 |
 | PLG-014 | 本机通过 | 配置 UI 只使用 Host Flutter 组件且不注入路由/脚本；`GET /v1/plugins/{id}/schema` 从内容寻址仓库解析 Schema（JSON 或 DAG-CBOR 双编码，并修复 set_config 的同一潜在不一致）；Flutter 按 Schema 渲染开关/枚举下拉/数值滑杆/文本框（默认值计算），Schema 不可解析时回退 JSON 编辑；API 测试 1 项 + Flutter 测试 3 项 | 仪表/预设控件与七端交互待验收 |
@@ -87,7 +87,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | NOD-003 | 本机通过 | Rust Core UnixFS、Bitswap、Kademlia、mDNS、TCP/WebSocket/QUIC、Pin/持久仓库；600 KB Helia 互操作与整文件摘要测试 | Android/iOS/HarmonyOS 原生构建和 Kubo 额外实测待外证 |
 | NOD-004 | 本机通过 | raw/DAG-CBOR CIDv1 及 rust-ipfs Block 校验；错误 CID 提交拒绝、跨节点 Bitswap/UnixFS 测试 | 大规模恶意 peer/fuzz 待后续强化 |
 | NOD-005 | 本机通过 | Pin/Unpin/list 持久化与 ProviderHealth；重启测试/UI；第三方 Kubo 兼容 Pin 服务已落地（DST-009：配置、推送、端点校验） | 远端 Pin 服务状态监控与七端 UI 展示待验收 |
-| NOD-006 | 部分实现 | 存储/缓存/并发/上下行/计量配置；下载限速与新任务并发更新；网络类别声明（wifi/cellular/ethernet/unknown）+ 网络策略暂停/恢复：蜂窝且未允许计量 → 全部暂停、蜂窝下 `wifi_only` 任务无条件暂停、回到允许类别只自动恢复网络暂停任务（用户手动暂停不打扰），结构化原因 `paused_wifi_only`/`paused_metered_network` 并随传输事件推送；runner 执行前复查并在被重新排队时安全中止；服务 2 项 + API 2 项测试 | 上传限速：内嵌 rust-ipfs Bitswap 无带宽节流，API 按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示暂不支持；自动复刻未实现 |
+| NOD-006 | 本机通过 | 存储/缓存/并发/上下行/计量配置；下载限速与新任务并发更新；网络类别声明 + 网络策略暂停/恢复（结构化原因并随事件推送；runner 执行前复查并安全中止）；自动复刻：`auto_replicate_published` 开启后发布成功即把各 rendition 内容 CID 建为幂等 Pin 传输任务并推送第三方服务；服务 2 项 + API 3 项测试 | 上传限速：内嵌 rust-ipfs Bitswap 无带宽节流，API 按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示暂不支持 |
 | NOD-007 | 本机通过 | `/v1/diagnostics` + UI 脱敏快照包含真实传输/路由/计数；精确 peer/listener 地址刻意不进入可分享报告 | 七端抓包与隐私复验待 RC |
 | NOD-008 | 部分实现 | Web pagehide/pageshow/visibility 与 Android/iOS/HarmonyOS/桌面 Rust FFI 生命周期；UI 明示后台降级且关闭后不持续 | 移动系统后台限制和打包结果待物理设备外证 |
 | NOD-009 | 本机通过 | 内置 Bitswap 是首选网络路径，显式配置的 Kubo HTTP 仅作兼容回退；所有路径提交前验 CID | 网关关闭七端 E2E 待验收 |
@@ -106,7 +106,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | DST-007 | 本机通过 | 下载与解码均有界流式；`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出（64 KiB 块、单范围 `Range`、任务终结后服务完尾部并结束、失败/取消 409）；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接；完成 part 保留，孤儿文件由启动/流端点清理；Flutter 边下边播音源经 just_audio 代理注入 Bearer 鉴权（令牌不交给平台播放器），播放器 Seek 走 Range 只取已下载前缀；传输页提供“边下边播”入口；Rust API 测试 4 项 + Flutter 4 项（真实代理链路 + 鉴权头 + 失败路径） | 七端实机与真实网络抖动下的续播/切离线源待验收；P2P 为整块落地后起播（字节级渐进流为已知限制）；Web 端整段缓冲（浏览器限制） |
 | DST-008 | 本机通过 | `.part` 流式校验后原子提交本地 CAS；错误内容永不入库；集成测试 | 目标音乐目录提交尚未统一 |
 | DST-009 | 本机通过 | 发布默认 Pin，UI 显示本机 Pin/Provider 健康（configured_pin_services 回填配置）；收藏协助 Pin（显式开关 assist_pin_favorites：本地已有对象直接 Pin、否则幂等 Pin 传输任务并服从网络策略）、显式 Pin 与发布后把 CID 推送第三方 Kubo 兼容 Pin 服务；端点校验（http(s)/无凭据/≤16 个/长度上限）；API 测试 2 项 | 第三方服务可用性监控与七端交互待验收 |
-| DST-010 | 部分实现 | 并发、下载限速、计量网络、缓存配置；网络类别声明驱动仅 Wi-Fi/计量开关暂停恢复；每任务蜂窝额度计量（`cellular_bytes_used` 持久累计，超限暂停 `paused_cellular_quota`，回 Wi-Fi 自动恢复，runner 按块计量并安全中止）；服务测试 2 项 | 自动复刻未实现；网络类别由用户在设置中声明（未接系统连通性监听） |
+| DST-010 | 本机通过 | 并发、下载限速、计量网络、缓存配置；网络类别声明驱动暂停恢复；每任务蜂窝额度计量（持久累计、超限结构化暂停、回 Wi-Fi 自动恢复）；发布后自动复刻策略（`auto_replicate_published`）；服务测试 2 项 + API 1 项 | 网络类别由用户在设置中声明（未接系统连通性监听） |
 | DST-011 | 本机通过 | tombstone 只更新 Feed；UI/文档明确 CID 不可删除 | 七端文案验收待执行 |
 | DST-012 | 本机通过 | Public Manifest 缺许可证/权利声明时发布失败；单测 | 发布向导仍是高级 JSON 输入 |
 | COM-001 | 本机通过 | CommunitySourceManifest、维护者签名、Catalog/Policy 独立开关与 UI | 启动源当前为空 Feed |

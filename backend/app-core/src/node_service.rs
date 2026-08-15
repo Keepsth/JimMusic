@@ -35,6 +35,9 @@ pub struct NodeConfig {
     /// 收藏曲目时自动协助 Pin 其内容 CID（用户显式开启，DST-009）。
     #[serde(default)]
     pub assist_pin_favorites: bool,
+    /// 发布成功后自动复刻各 rendition 的内容 CID（用户显式开启，DST-010）。
+    #[serde(default)]
+    pub auto_replicate_published: bool,
     /// 显式配置的第三方 Kubo 兼容 Pin 服务端点（DST-009）。
     #[serde(default)]
     pub pin_services: Vec<String>,
@@ -51,6 +54,7 @@ impl Default for NodeConfig {
             metered_network_allowed: false,
             network_class: None,
             assist_pin_favorites: false,
+            auto_replicate_published: false,
             pin_services: Vec::new(),
         }
     }

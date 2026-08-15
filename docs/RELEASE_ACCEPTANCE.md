@@ -9,11 +9,11 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（245） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema 与关联 ID，workspace/all targets/all features |
+| Rust tests | 通过（246） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、自动复刻、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列、安装日志、配置 Schema 与关联 ID，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（65） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件、操作取消 |
+| Flutter tests | 通过（66） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -40,8 +40,10 @@
 | 声明式配置控件 | 通过 | Schema 端点（JSON/DAG-CBOR 双编码解析），Flutter 按 Schema 渲染开关/枚举/滑杆/文本框（默认值计算），不可解析回退 JSON；API 1 项 + Flutter 3 项测试 |
 | 关联 ID | 通过 | 每个 HTTP 请求一个 v1_request span（method/path/request_id），Idempotency-Key 提取长度受限且不读取秘密头；2 项测试 |
 | 操作取消 | 通过 | 控制台“取消当前操作”关闭进行中操作的专属客户端，操作以“操作已取消”结束并可重新发起；1 项测试 |
+| 发布自动复刻 | 通过 | auto_replicate_published 开启后发布成功即把各 rendition 内容 CID 建为幂等 Pin 传输任务并推送第三方服务；API 1 项测试 |
+| 敏感配置字段 | 通过 | Schema 声明 sensitive 的字段遮罩显示并标注（敏感）；Flutter 1 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 80、部分实现 42、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 82、部分实现 40、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

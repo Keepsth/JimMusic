@@ -429,6 +429,7 @@ class _NodeTab extends StatelessWidget {
     var metered = config['metered_network_allowed'] == true;
     var networkClass = (config['network_class'] as String?) ?? 'unknown';
     var assistPin = config['assist_pin_favorites'] == true;
+    var autoReplicate = config['auto_replicate_published'] == true;
     final pinServices = TextEditingController(
       text:
           (config['pin_services'] as List<dynamic>? ?? const [])
@@ -490,6 +491,12 @@ class _NodeTab extends StatelessWidget {
                     subtitle: const Text('收藏曲目时帮助固定其内容 CID（DST-009）'),
                     value: assistPin,
                     onChanged: (value) => setState(() => assistPin = value),
+                  ),
+                  SwitchListTile(
+                    title: const Text('发布后自动复刻'),
+                    subtitle: const Text('发布成功后自动复刻各 rendition 内容（DST-010）'),
+                    value: autoReplicate,
+                    onChanged: (value) => setState(() => autoReplicate = value),
                   ),
                   TextField(
                     controller: pinServices,
@@ -568,6 +575,7 @@ class _NodeTab extends StatelessWidget {
       'metered_network_allowed': metered,
       'network_class': networkClass,
       'assist_pin_favorites': assistPin,
+      'auto_replicate_published': autoReplicate,
       'pin_services': pinServices.text.trim().isEmpty
           ? const <String>[]
           : pinServices.text
