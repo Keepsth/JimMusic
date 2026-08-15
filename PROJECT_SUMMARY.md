@@ -69,11 +69,12 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 236 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 238 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，49 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
-  边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖与曲库统一同步）；
+- Flutter analyze 零问题，54 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+  边下边播代理链路、播放页来源/缓冲/传输状态展示、发布者关注、策略覆盖、错误
+  本地化与曲库统一同步）；
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；
@@ -97,6 +98,9 @@
   域错误语义在 mutate_record 中完整保留；
 - 策略本地覆盖（COM-011）：warn/demote/hide 可本地覆盖/取消（附申诉理由），block/revoke
   为强制决策拒绝覆盖；社区页提供策略查询与覆盖对话框；
+- 蜂窝额度（DST-010）：每任务蜂窝额度持久计量，超限结构化暂停并在回 Wi-Fi 后自动恢复；
+- 错误本地化（API-004）：Flutter 统一把稳定错误信封映射为本地化文案、重试建议与网络
+  恢复提示，控制台横幅与传输错误行统一消费；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
   重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询，不再依赖 5s 定时轮询；
 - 社区源紧凑快照端点支持 gzip 传输压缩、SHA-256/字节数完整性头与 32 MiB 未压缩上限；

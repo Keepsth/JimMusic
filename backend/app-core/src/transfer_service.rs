@@ -57,6 +57,31 @@ fn network_pause_error(cellular: bool, wifi_only: bool, metered_allowed: bool) -
     }
 }
 
+/// 蜂窝额度超限的结构化暂停原因（DST-010）。
+fn quota_error(limit: u64) -> ErrorEnvelopeV1 {
+    ErrorEnvelopeV1 {
+        schema_version: SCHEMA_V1,
+        code: "paused_cellular_quota".into(),
+        message: format!("cellular quota of {limit} bytes for this task was exceeded"),
+        subsystem: "transfer".into(),
+        operation: "network_policy".into(),
+        retryable: false,
+        unsupported_reason: None,
+        details: BTreeMap::new(),
+        request_id: None,
+        causes: Vec::new(),
+    }
+}
+
+/// 任务是否因每任务蜂窝额度耗尽而受限（仅蜂窝网络下生效）。
+pub fn cellular_quota_exceeded(task: &TransferTaskV1, class: Option<&str>) -> bool {
+    class == Some("cellular")
+        && task
+            .network_policy
+            .cellular_limit_bytes
+            .is_some_and(|limit| task.cellular_bytes_used >= limit)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum TransferError {
     #[error(transparent)]
@@ -177,6 +202,7 @@ impl TransferService {
             network_policy: policy,
             destination,
             paused_by_network: false,
+            cellular_bytes_used: 0,
             error: None,
             created_at: timestamp,
             updated_at: timestamp,
@@ -333,7 +359,9 @@ impl TransferService {
             ) {
                 continue;
             }
-            let restricted = metered_restricted || (cellular && task.network_policy.wifi_only);
+            let restricted = metered_restricted
+                || (cellular && task.network_policy.wifi_only)
+                || cellular_quota_exceeded(&task, class);
             if restricted {
                 if task.state == TransferState::Paused && task.paused_by_network {
                     continue; // 已按网络策略暂停，保持
@@ -350,11 +378,19 @@ impl TransferService {
                     })?;
                     stored.state = TransferState::Paused;
                     stored.paused_by_network = true;
-                    stored.error = Some(network_pause_error(
-                        cellular,
-                        task.network_policy.wifi_only,
-                        metered_allowed,
-                    ));
+                    stored.error = Some(
+                        task.network_policy
+                            .cellular_limit_bytes
+                            .filter(|_| cellular_quota_exceeded(&task, class))
+                            .map(quota_error)
+                            .unwrap_or_else(|| {
+                                network_pause_error(
+                                    cellular,
+                                    task.network_policy.wifi_only,
+                                    metered_allowed,
+                                )
+                            }),
+                    );
                     stored.updated_at = timestamp;
                     Ok(stored.clone())
                 })?;
@@ -379,6 +415,39 @@ impl TransferService {
             }
         }
         Ok(NetworkClassEffect { paused, resumed })
+    }
+
+    /// DST-010：累加蜂窝网络下已下载字节；超出每任务额度时把任务
+    /// 暂停并给出结构化原因（回到 Wi-Fi 后由网络策略恢复）。
+    pub fn add_cellular_bytes(
+        &self,
+        task_id: &str,
+        bytes: u64,
+    ) -> Result<TransferTaskV1, TransferError> {
+        let task = self.store.transact(|state| {
+            let task = state
+                .tasks
+                .get_mut(task_id)
+                .ok_or_else(|| StorageError::Corrupt {
+                    path: PathBuf::from("transfers"),
+                    reason: format!("missing task `{task_id}`"),
+                })?;
+            if is_terminal(task.state) || task.state == TransferState::Paused {
+                return Ok(task.clone());
+            }
+            task.cellular_bytes_used = task.cellular_bytes_used.saturating_add(bytes);
+            if let Some(limit) = task.network_policy.cellular_limit_bytes {
+                if task.cellular_bytes_used >= limit {
+                    task.state = TransferState::Paused;
+                    task.paused_by_network = true;
+                    task.error = Some(quota_error(limit));
+                }
+            }
+            task.updated_at = now();
+            Ok(task.clone())
+        })?;
+        self.publish_task(&task);
+        Ok(task)
     }
 
     /// 按当前类别判定任务是否允许排队执行（供创建/恢复入口使用）。
@@ -732,6 +801,84 @@ mod tests {
             cellular_limit_bytes: None,
             max_concurrency: 2,
         }
+    }
+
+    fn quota_policy(limit: u64) -> NetworkPolicyV1 {
+        NetworkPolicyV1 {
+            wifi_only: false,
+            cellular_limit_bytes: Some(limit),
+            max_concurrency: 2,
+        }
+    }
+
+    #[test]
+    fn cellular_quota_pauses_task_and_resumes_on_wifi() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = TransferService::open(dir.path().join("transfers.json")).unwrap();
+        let task = service
+            .create(
+                "req-quota",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"q"),
+                None,
+                quota_policy(100),
+            )
+            .unwrap();
+
+        // 蜂窝网络下累加计量：未超限继续，超限暂停并给出结构化原因。
+        // （真实链路中 record_progress 先置 Transferring，再按块计量。）
+        service
+            .record_progress(&task.task_id, 60, None, 0, vec!["test".into()])
+            .unwrap();
+        let updated = service.add_cellular_bytes(&task.task_id, 60).unwrap();
+        assert_eq!(updated.state, TransferState::Transferring);
+        assert_eq!(updated.cellular_bytes_used, 60);
+        let updated = service.add_cellular_bytes(&task.task_id, 40).unwrap();
+        assert_eq!(updated.state, TransferState::Paused);
+        assert!(updated.paused_by_network);
+        assert_eq!(updated.error.unwrap().code, "paused_cellular_quota");
+
+        // 蜂窝类别下再次应用策略：保持额度暂停（不重复恢复）。
+        let effect = service
+            .apply_network_class(Some("cellular"), true, 10)
+            .unwrap();
+        assert!(effect.resumed.is_empty());
+        assert!(effect.paused.is_empty()); // 已暂停，保持
+        assert_eq!(
+            service.get(&task.task_id).unwrap().state,
+            TransferState::Paused
+        );
+
+        // 回到 Wi-Fi：自动恢复排队（额度只约束蜂窝网络）。
+        let effect = service
+            .apply_network_class(Some("wifi"), false, 20)
+            .unwrap();
+        assert_eq!(effect.resumed.len(), 1);
+        assert_eq!(
+            service.get(&task.task_id).unwrap().state,
+            TransferState::Queued
+        );
+        assert!(service.get(&task.task_id).unwrap().error.is_none());
+    }
+
+    #[test]
+    fn cellular_quota_exceeded_requires_cellular_class() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = TransferService::open(dir.path().join("transfers.json")).unwrap();
+        let task = service
+            .create(
+                "req-quota2",
+                TransferKind::Download,
+                cid_v1_for_bytes(RAW_CODEC, b"q2"),
+                None,
+                quota_policy(10),
+            )
+            .unwrap();
+        service.add_cellular_bytes(&task.task_id, 20).unwrap();
+        let stored = service.get(&task.task_id).unwrap();
+        assert!(cellular_quota_exceeded(&stored, Some("cellular")));
+        assert!(!cellular_quota_exceeded(&stored, Some("wifi")));
+        assert!(!cellular_quota_exceeded(&stored, None));
     }
 
     #[test]

@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../services/control_api.dart';
 import '../services/control_api_sse.dart';
+import '../services/control_api_types.dart';
 import '../services/library_sync_service.dart';
 import '../services/persistence_service.dart';
 import '../services/rust_bridge.dart';
@@ -18,6 +19,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _token = '';
   bool _loading = false;
   String? _error;
+  Object? _errorDetail;
   Map<String, dynamic>? _health;
   Map<String, dynamic>? _node;
   Map<String, dynamic>? _deviceNode;
@@ -63,6 +65,13 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get token => _token;
   bool get loading => _loading;
   String? get error => _error;
+
+  /// API-004：稳定机器码映射后的用户可读错误文案。
+  String get userErrorText {
+    final detail = _errorDetail ?? _error;
+    if (detail == null) return '';
+    return apiErrorText(detail).full;
+  }
   Map<String, dynamic>? get health => _health;
   Map<String, dynamic>? get node => _node;
   Map<String, dynamic>? get deviceNode => _deviceNode;
@@ -95,6 +104,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       return report;
     } catch (error) {
       _error = error.toString();
+      _errorDetail = error;
       _loading = false;
       notifyListeners();
       return null;
@@ -164,6 +174,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     } catch (error) {
       _error = error.toString();
+      _errorDetail = error;
     } finally {
       api.close();
       await Future.wait([_refreshBrowserNode(), _refreshDeviceNode()]);
@@ -469,6 +480,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       return _map(await api.get('/policy/${Uri.encodeComponent(target)}'));
     } catch (error) {
       _error = error.toString();
+      _errorDetail = error;
       notifyListeners();
       return null;
     } finally {
@@ -554,6 +566,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       _lastResult = await operation(api);
     } catch (error) {
       _error = error.toString();
+      _errorDetail = error;
     } finally {
       api.close();
       _loading = false;

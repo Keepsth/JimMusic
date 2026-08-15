@@ -1261,6 +1261,9 @@ pub struct TransferTaskV1 {
     /// 网络类别时只自动恢复这类暂停，不打扰用户手动暂停的任务。
     #[serde(default)]
     pub paused_by_network: bool,
+    /// 蜂窝网络下已下载字节（DST-010 每任务蜂窝额度计量）。
+    #[serde(default)]
+    pub cellular_bytes_used: u64,
     #[serde(default)]
     pub error: Option<ErrorEnvelopeV1>,
     pub created_at: i64,

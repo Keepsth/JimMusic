@@ -106,7 +106,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | DST-007 | 本机通过 | 下载与解码均有界流式；`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出（64 KiB 块、单范围 `Range`、任务终结后服务完尾部并结束、失败/取消 409）；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接；完成 part 保留，孤儿文件由启动/流端点清理；Flutter 边下边播音源经 just_audio 代理注入 Bearer 鉴权（令牌不交给平台播放器），播放器 Seek 走 Range 只取已下载前缀；传输页提供“边下边播”入口；Rust API 测试 4 项 + Flutter 4 项（真实代理链路 + 鉴权头 + 失败路径） | 七端实机与真实网络抖动下的续播/切离线源待验收；P2P 为整块落地后起播（字节级渐进流为已知限制）；Web 端整段缓冲（浏览器限制） |
 | DST-008 | 本机通过 | `.part` 流式校验后原子提交本地 CAS；错误内容永不入库；集成测试 | 目标音乐目录提交尚未统一 |
 | DST-009 | 本机通过 | 发布默认 Pin，UI 显示本机 Pin/Provider 健康（configured_pin_services 回填配置）；收藏协助 Pin（显式开关 assist_pin_favorites：本地已有对象直接 Pin、否则幂等 Pin 传输任务并服从网络策略）、显式 Pin 与发布后把 CID 推送第三方 Kubo 兼容 Pin 服务；端点校验（http(s)/无凭据/≤16 个/长度上限）；API 测试 2 项 | 第三方服务可用性监控与七端交互待验收 |
-| DST-010 | 部分实现 | 并发、下载限速、计量网络、缓存配置；网络类别声明（Wi-Fi/蜂窝/有线/未知）驱动仅 Wi-Fi 与计量开关的暂停/恢复 | 蜂窝额度与自动复刻未实现；网络类别目前由用户在设置中声明（未接系统连通性监听） |
+| DST-010 | 部分实现 | 并发、下载限速、计量网络、缓存配置；网络类别声明驱动仅 Wi-Fi/计量开关暂停恢复；每任务蜂窝额度计量（`cellular_bytes_used` 持久累计，超限暂停 `paused_cellular_quota`，回 Wi-Fi 自动恢复，runner 按块计量并安全中止）；服务测试 2 项 | 自动复刻未实现；网络类别由用户在设置中声明（未接系统连通性监听） |
 | DST-011 | 本机通过 | tombstone 只更新 Feed；UI/文档明确 CID 不可删除 | 七端文案验收待执行 |
 | DST-012 | 本机通过 | Public Manifest 缺许可证/权利声明时发布失败；单测 | 发布向导仍是高级 JSON 输入 |
 | COM-001 | 本机通过 | CommunitySourceManifest、维护者签名、Catalog/Policy 独立开关与 UI | 启动源当前为空 Feed |
@@ -140,7 +140,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | API-001 | 部分实现 | protocol DTO + Rust 服务 + `/v1` HTTP + FFI 播放桥 | JS/WASM 与所有服务的契约一致性测试不全 |
 | API-002 | 本机通过 | DTO/事件/错误/网络对象 `schema_version`，严格 canonical 解码限制；协议测试 | 跨语言兼容向量待补 |
 | API-003 | 本机通过 | 所有 HTTP mutation 强制 Idempotency-Key/request_id，指纹冲突和持久 replay；API 测试 | 旧 legacy 路由只返回 410，不迁移副作用 |
-| API-004 | 部分实现 | 稳定错误信封与播放失败模型 | Flutter 尚未按所有机器码做一致本地化动作 |
+| API-004 | 本机通过 | 稳定错误信封与播放失败模型；Flutter 统一本地化映射（`apiErrorText`）：unsupported/not_found/conflict/payload_too_large/幂等键/网络暂停码/401 → 本地化文案 + 重试建议 + 恢复提示，控制台横幅与传输错误行统一消费；5 项测试 | 跨语言与无障碍复核待验收 |
 | API-005 | 本机通过 | 单调 sequence SSE、after 检测、snapshot.required 与快照端点；Flutter 已改为消费 `/v1/events`：sequence 缺口与 snapshot.required 触发整体重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询；解析器/真实 HTTP SSE/Provider 测试（`control_api_sse_test.dart`，13 项） | Web fetch 流式 SSE 路径与七端断线重连待实机/浏览器验收 |
 | API-006 | 部分实现 | 默认回环、启动必需 bearer token、常量时间校验；Flutter 拒绝非 HTTPS 远程 | 服务端 TLS/CORS/远程开启审计未完整实现 |
 | API-007 | 部分实现 | `docs/API_MIGRATION.md`、v1 路径、状态 schema、回滚原则 | 数据库升级/降级测试矩阵不完整 |

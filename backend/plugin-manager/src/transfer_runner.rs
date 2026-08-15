@@ -209,6 +209,17 @@ async fn run(state: Arc<AppState>, task_id: &str) -> Result<(), String> {
                 vec!["configured-ipfs".into()],
             )
             .map_err(|error| error.to_string())?;
+        // DST-010：蜂窝网络下计量每任务额度，超限时由服务暂停本任务，
+        // runner 正常中止（状态已不是本 runner 所有，不会被误报失败）。
+        if state.node.config().network_class.as_deref() == Some("cellular") {
+            let updated = state
+                .transfers
+                .add_cellular_bytes(task_id, chunk.len() as u64)
+                .map_err(|error| error.to_string())?;
+            if updated.state == TransferState::Paused {
+                return Err("cellular quota exceeded for this task".into());
+            }
+        }
         throttle(rate_limit, completed, started).await;
     }
     output.flush().await.map_err(|error| error.to_string())?;

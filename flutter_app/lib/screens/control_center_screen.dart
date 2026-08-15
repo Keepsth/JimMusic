@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../providers/audio_output_provider.dart';
 import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
+import '../services/control_api_types.dart' show networkPauseHint;
 
 class ControlCenterScreen extends StatelessWidget {
   const ControlCenterScreen({super.key});
@@ -49,7 +50,11 @@ class ControlCenterScreen extends StatelessWidget {
               if (control.loading) const LinearProgressIndicator(),
               if (control.error != null)
                 MaterialBanner(
-                  content: Text(control.error!),
+                  content: Text(
+                    control.userErrorText.isNotEmpty
+                        ? control.userErrorText
+                        : control.error!,
+                  ),
                   leading: const Icon(Icons.error_outline),
                   actions: [
                     TextButton(
@@ -719,7 +724,8 @@ class _TransfersTab extends StatelessWidget {
                           Text(state == 'verifying' ? '正在校验 CID' : '正在原子提交'),
                         if (error != null)
                           Text(
-                            '${error['code']}: ${error['message']}',
+                            '${error['code']}: ${error['message']}'
+                            '${networkPauseHint('${error['code']}') == null ? '' : '\n提示：${networkPauseHint('${error['code']}')}'}',
                             style: TextStyle(
                               color: Theme.of(context).colorScheme.error,
                             ),
