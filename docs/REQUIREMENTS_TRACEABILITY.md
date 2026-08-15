@@ -164,7 +164,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | NFR-001 | 待外证 | UI 无模拟 ticker，常用操作本地化 | 未采集七端 P95 |
 | NFR-002 | 待外证 | 增量解码与真实播放路径 | 未采集格式/平台 P95 |
 | NFR-003 | 待外证 | seek 状态与引擎入口 | 未采集本地可 seek 格式 P95 |
-| NFR-004 | 部分实现 | process elapsed/deadline miss 统计 | 发布构建没有持续 deadline 基准 |
+| NFR-004 | 本机通过 | process elapsed/deadline miss 统计；发布构建持续 deadline 基准：`rt_deadline_bench` 示例在 release 下跑 20,000 块并记录基线 JSON（本地 0 超时、max 7.7µs vs 10.7ms deadline），CI verify 门禁运行并上传基线（超时占比 >1% 失败）；本地实测通过 | 长期基线累积待 CI 历史 |
 | NFR-005 | 待外证 | PCM 队列/缓冲有固定上限 | 未完成两小时 RSS/泄漏测试 |
 | NFR-006 | 本机通过 | 所有提交前 CID 校验，篡改负向测试 | P2P 大规模互操作待实现 |
 | NFR-007 | 本机通过 | 插件 staging/回滚、图原子 swap/rollback、CAS 原子 commit；故障测试 | 断电实机矩阵不完整 |

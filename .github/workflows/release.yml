@@ -41,6 +41,15 @@ jobs:
       - name: Build Rust FFI libraries
         working-directory: backend
         run: cargo build --locked --workspace --all-features
+      - name: Realtime deadline baseline (NFR-004)
+        working-directory: backend
+        run: cargo run --release --locked -p plugin-manager --example rt_deadline_bench -- 20000 rt-deadline-baseline.json
+      - name: Upload realtime deadline baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: rt-deadline-baseline
+          path: backend/rt-deadline-baseline.json
+          if-no-files-found: error
       - name: Rust tests
         working-directory: backend
         run: cargo test --locked --workspace --all-targets --all-features

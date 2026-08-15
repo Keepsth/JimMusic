@@ -166,6 +166,8 @@
   原生库且动态依赖无缺失；
 - 控制服务和应用内核心均使用 Rust TLS，workspace 依赖树不含 `native-tls`/OpenSSL；
 - release 服务以旧 repo 启动并完成新增字段迁移，健康/鉴权/签名启动源冒烟通过；
+- 实时 deadline 基准（NFR-004）：`rt_deadline_bench`（release）20,000 块基线 0 超时
+  （max 7.7µs vs 10.7ms deadline）；CI verify 门禁运行并上传基线，超时占比 >1% 失败；
 - GitHub Actions 经 actionlint 1.7.7 校验通过。
 
 ## 稳定版阻断项

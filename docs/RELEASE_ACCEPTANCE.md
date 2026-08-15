@@ -57,8 +57,9 @@
 | 发布向导 | 通过 | 元数据/权利声明 + 多 rendition 编辑（增删、ID/容器/编解码/采样率/位深/声道/字节长度、唯一 original）表单校验生成 Manifest（byte_length 正整数，满足后端校验），签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方服务）；5 项测试 |
 | 插件目录浏览 | 通过 | `GET /v1/plugins/catalog` 列出社区目录收录的 PluginManifest 条目并支持 `q` 搜索（CID/分类/标签/注解），`/catalog/{cid}` 详情解析 Manifest（JSON/DAG-CBOR 双编码）并返回 artifact_available/installed_state/active_version/update_available/revoked 摘要；插件页目录浏览/搜索/详情/安装（发布者公钥与权限确认，`ipfs://CID` 直取制品）；API 1 项测试 |
 | 社区原生二次确认 | 通过 | 社区原生默认拒绝（CommunityNativeDenied）；高级授权安装前二次确认（持续警告文案），已安装插件列表永久标记警告条目；后端安装/撤销 E2E 测试 + Flutter 4 项测试 |
+| 实时 deadline 基准 | 通过 | `rt_deadline_bench`（release）20,000 块基线：0 超时、max 7.7µs vs 10.7ms deadline；CI verify 门禁运行并上传基线（超时占比 >1% 失败） |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 98、部分实现 24、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 99、部分实现 23、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 
