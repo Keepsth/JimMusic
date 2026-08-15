@@ -13,7 +13,7 @@
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（37） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路 |
+| Flutter tests | 通过（41） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -25,6 +25,7 @@
 | 边下边播流端点 | 通过 | `/v1/transfers/{id}/stream` 跟随 part 增长输出、单范围 Range、终结后尾部交接、整块路径落盘交接与孤儿清理；Flutter 经 just_audio 代理注入鉴权播放并支持 Seek；Rust 4 项 + Flutter 4 项测试 |
 | 网络类别策略 | 通过 | 网络类别声明驱动仅 Wi-Fi/计量开关的传输暂停与自动恢复（只恢复网络暂停任务）；runner 执行前复查；上传限速按 PROD-004 显式拒绝（`unsupported` + reason），UI 明示；服务 2 项 + API 2 项测试 |
 | 插件撤销自动停用 | 通过 | 社区 Policy Revoke 事件在摄取与刷新后自动应用到已安装插件（manifest CID 匹配 → Revoked + 事件推送，幂等）；API 测试 |
+| 播放页状态展示 | 通过 | 播放页显示真实来源标签、缓冲位置与边下边播下载状态（字节/状态/Provider），无模拟数据；4 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
 | P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 64、部分实现 58、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 

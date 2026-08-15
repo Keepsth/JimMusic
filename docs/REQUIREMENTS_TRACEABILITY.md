@@ -127,7 +127,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 
 | ID | 状态 | 实现/证据入口 | 未闭环项 |
 |---|---|---|---|
-| UI-001 | 部分实现 | 播放页来自 Rust Bridge/just_audio 真实事件，错误可见，无模拟 timer | 来源/缓存/网络状态未完全并入播放页 |
+| UI-001 | 本机通过 | 播放页来自 Rust Bridge/just_audio 真实事件，错误可见，无模拟 timer；来源标签（Rust Core 输出/本地文件/内存字节/IPFS 边下边播/CID/社区）、just_audio 缓冲位置进度与边下边播传输下载状态（字节/状态/Provider）全部来自真实服务状态；小屏改为可滚动布局；4 项测试 | 七端截图/无障碍证据待 RC |
 | UI-002 | 部分实现 | 本地导入、扫描、搜索、排序、缺失标记 | 后端 IPFS/社区曲库未接入同一 Flutter 列表 |
 | UI-003 | 本机通过 | 传输页显示状态、优先级、速度、Provider、校验/提交、目标和错误；可调优先级/暂停/恢复/取消/重试 | 七端截图与辅助功能证据待 RC |
 | UI-004 | 部分实现 | 身份、签名、publish/update/tombstone、Pin receipt 入口 | 缺完整元数据/rendition 表单和副本向导 |

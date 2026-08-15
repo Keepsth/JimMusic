@@ -2,9 +2,32 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/lyrics.dart';
+import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../widgets/geek_cover.dart';
 import '../widgets/lyrics_view.dart';
+
+/// 传输任务状态摘要（边下边播的缓存/网络状态，UI-001）。
+({int bytesCompleted, int? bytesTotal, String state, String providers})
+transferTaskSummary(Map<String, dynamic>? task) {
+  final completed = (task?['bytes_completed'] as num?)?.toInt() ?? 0;
+  final total = (task?['bytes_total'] as num?)?.toInt();
+  return (
+    bytesCompleted: completed,
+    bytesTotal: total,
+    state: '${task?['state'] ?? 'unknown'}',
+    providers: (task?['providers'] as List<dynamic>? ?? const [])
+        .join(', '),
+  );
+}
+
+String _formatBytes(int bytes) {
+  if (bytes >= 1024 * 1024) {
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
+  }
+  if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(1)} KiB';
+  return '$bytes B';
+}
 
 /// 播放页：专辑封面、播放控制、进度条、收藏。
 class PlayerScreen extends StatelessWidget {
@@ -63,7 +86,7 @@ class PlayerScreen extends StatelessWidget {
 
           final favorite = player.isFavorite(music);
 
-          return Padding(
+          return SingleChildScrollView(
             padding: const EdgeInsets.all(24.0),
             child: Column(
               children: [
@@ -119,6 +142,14 @@ class PlayerScreen extends StatelessWidget {
                       ),
                     ),
                   ],
+                ),
+
+                const SizedBox(height: 16),
+
+                // 来源 / 缓冲 / 网络状态（UI-001）：来自真实服务事件，不使用模拟数据。
+                _PlaybackStatusLine(
+                  player: player,
+                  control: context.watch<ControlPlaneProvider>(),
                 ),
 
                 const SizedBox(height: 24),
@@ -238,7 +269,7 @@ class PlayerScreen extends StatelessWidget {
                   ],
                 ),
 
-                const Spacer(),
+                const SizedBox(height: 8),
               ],
             ),
           );
@@ -252,5 +283,90 @@ class PlayerScreen extends StatelessWidget {
     final minutes = duration.inMinutes;
     final remainingSeconds = duration.inSeconds % 60;
     return '${minutes.toString().padLeft(1, '0')}:${remainingSeconds.toString().padLeft(2, '0')}';
+  }
+}
+
+/// 来源标签 + 缓冲位置 + 边下边播传输进度（UI-001）。
+class _PlaybackStatusLine extends StatelessWidget {
+  const _PlaybackStatusLine({required this.player, required this.control});
+
+  final MusicPlayerProvider player;
+  final ControlPlaneProvider control;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final buffered = player.bufferedPosition;
+    final duration = player.duration;
+    final showBuffer = !player.supportsNativeTransitions &&
+        duration > 0 &&
+        buffered > 0 &&
+        buffered < duration;
+
+    final taskId = player.transferTaskId;
+    Map<String, dynamic>? task;
+    if (taskId != null) {
+      for (final candidate in control.transfers) {
+        if (candidate['task_id'] == taskId) {
+          task = candidate;
+          break;
+        }
+      }
+    }
+    final summary = transferTaskSummary(task);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.album, size: 14, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 4),
+            Text(
+              '来源：${player.sourceLabel}',
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontSize: 12,
+              ),
+            ),
+            const Spacer(),
+            if (player.isBuffering)
+              SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: scheme.primary,
+                ),
+              ),
+          ],
+        ),
+        if (showBuffer)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(2),
+              child: LinearProgressIndicator(
+                value: (buffered / duration).clamp(0.0, 1.0),
+                minHeight: 3,
+                backgroundColor: scheme.onSurfaceVariant.withValues(alpha: 0.2),
+              ),
+            ),
+          ),
+        if (taskId != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '下载：${summary.state} · '
+            '${_formatBytes(summary.bytesCompleted)}'
+            '${summary.bytesTotal == null ? '' : ' / ${_formatBytes(summary.bytesTotal!)}'}'
+            '${summary.providers.isEmpty ? '' : ' · ${summary.providers}'}',
+            style: TextStyle(
+              color: scheme.onSurfaceVariant,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ],
+    );
   }
 }

@@ -72,8 +72,8 @@
 - Rust format、Clippy（all targets/all features，`-D warnings`）和 230 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
-- Flutter analyze 零问题，37 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流与
-  边下边播代理链路）；
+- Flutter analyze 零问题，41 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
+  边下边播代理链路与播放页来源/缓冲/传输状态展示）；
 - 边下边播（DST-007）闭环：`/v1/transfers/{id}/stream` 跟随 part 文件增长流式输出并支持
   Range；Flutter 经 just_audio 代理注入 Bearer 鉴权播放、Seek 只取已下载前缀，传输页提供
   边下边播入口；整块路径（本地 CAS/P2P）落地后写入 part 供播放交接，孤儿文件启动/流端点清理；

@@ -90,6 +90,63 @@ class MusicPlayerProvider extends ChangeNotifier {
   bool get isPaused => _playerState == PlayerState.paused;
   bool get isBuffering => _playerState == PlayerState.buffering;
 
+  /// just_audio 已缓冲位置（秒）；桥模式或未知时回退到播放位置。
+  double _bufferedPosition = 0.0;
+
+  /// 已缓冲位置（秒）。
+  double get bufferedPosition {
+    if (_bridgeActive) return _currentPosition;
+    return _bufferedPosition.clamp(0.0, double.infinity).toDouble();
+  }
+
+  /// 当前音源的稳定机器标识：本地文件 / Rust 桥 / 内存字节（Web）/
+  /// IPFS 传输流 / 内容寻址 CID / 社区来源（UI-001）。
+  String get sourceLabel {
+    final music = _currentMusic;
+    if (music == null) return '无';
+    if (_bridgeActive) return 'Rust Core 输出';
+    if (music.id.startsWith('transfer-')) return 'IPFS 边下边播';
+    if (music.audioBytes != null && music.audioBytes!.isNotEmpty) {
+      return '内存字节（Web）';
+    }
+    if (music.filePath != null && music.filePath!.isNotEmpty) {
+      return '本地文件';
+    }
+    switch (music.sourceType) {
+      case TrackSourceType.ipfs:
+        return 'IPFS（${music.renditionCid ?? music.manifestCid ?? 'CID'}）';
+      case TrackSourceType.community:
+        return '社区来源';
+      case TrackSourceType.cached:
+        return '本地缓存';
+      case TrackSourceType.localFile:
+      case TrackSourceType.localMemory:
+        return '本地文件';
+    }
+  }
+
+  /// 边下边播伪曲目对应的传输任务 ID（普通曲目为 null）。
+  String? get transferTaskId {
+    final id = _currentMusic?.id ?? '';
+    return id.startsWith('transfer-') ? id.substring('transfer-'.length) : null;
+  }
+
+  /// 测试注入点：直接设置当前曲目与播放状态（跳过真实音频链路）。
+  @visibleForTesting
+  void debugSetCurrentTrack(
+    Music track, {
+    PlayerState state = PlayerState.buffering,
+  }) {
+    _currentMusic = track;
+    _playlist = [track];
+    _currentIndex = 0;
+    _currentPosition = 0.0;
+    _bufferedPosition = 0.0;
+    _bridgeActive = false;
+    _playerState = state;
+    notifyListeners();
+  }
+
   /// 媒体库中过滤掉搜索后的结果。
   List<Music> get filteredLibrary {
     final q = _searchQuery.trim().toLowerCase();
@@ -362,6 +419,7 @@ class MusicPlayerProvider extends ChangeNotifier {
     _playlist = [_currentMusic!];
     _currentIndex = 0;
     _currentPosition = 0.0;
+    _bufferedPosition = 0.0;
     notifyListeners();
 
     final source = transferStreamAudioSource(
@@ -432,6 +490,7 @@ class MusicPlayerProvider extends ChangeNotifier {
     }
     _playerState = PlayerState.stopped;
     _currentPosition = 0.0;
+    _bufferedPosition = 0.0;
     notifyListeners();
     await _saveSession();
   }
@@ -655,6 +714,12 @@ class MusicPlayerProvider extends ChangeNotifier {
     _audioSubs.add(
       audio.durationStream.listen((dur) {
         if (dur != null) _duration = dur.inSeconds.toDouble();
+      }),
+    );
+    _audioSubs.add(
+      audio.bufferedPositionStream.listen((buffered) {
+        _bufferedPosition = buffered.inSeconds.toDouble();
+        notifyListeners();
       }),
     );
     _audioSubs.add(

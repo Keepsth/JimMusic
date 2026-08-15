@@ -49,6 +49,13 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   @visibleForTesting
   ControlApi Function(String endpoint, String token)? debugApiFactory;
 
+  /// 测试注入点：直接替换传输列表（播放页边下边播状态展示测试用）。
+  @visibleForTesting
+  void debugSetTransfers(List<Map<String, dynamic>> transfers) {
+    _transfers = List.of(transfers);
+    notifyListeners();
+  }
+
   String get endpoint => _endpoint;
   String get token => _token;
   bool get loading => _loading;
