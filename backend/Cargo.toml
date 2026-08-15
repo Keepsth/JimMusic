@@ -1,8 +1,19 @@
 [workspace]
+resolver = "2"
 members = [
+  "protocol",
+  "plugin-abi",
   "app-core",
+  "app-core-static",
   "plugin-manager",
   "plugins/ffmpeg-decoder",
   "plugins/symphonia-decoder",
   "plugins/ui-bridge",
+  "plugins/null-output",
+  "plugins/web-audio",
+  "plugins/alsa-output",
 ]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2021"

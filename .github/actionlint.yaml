@@ -1,0 +1,7 @@
+self-hosted-runner:
+  labels:
+    - harmonyos
+    - jimmusic-acceptance
+    - android
+    - ios
+    - web

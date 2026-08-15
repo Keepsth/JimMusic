@@ -1,6 +1,64 @@
 [package]
 name = "app-core"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
+description = "JimMusic 应用程序核心：插件加载/调度、消息总线、日志与 IPFS 接入"
+
+[lib]
+name = "app_core"
+path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [dependencies]
+plugin-abi = { path = "../plugin-abi" }
+jimmusic-protocol = { path = "../protocol" }
+
+# 动态库加载
+libloading = "0.8"
+
+# 异步运行时与调度
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
+futures = "0.3"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# 错误处理与序列化
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# IPFS HTTP 客户端（仅作为显式配置的兼容回退）
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+url = "2"
+
+# 内嵌 IPFS/libp2p 节点。刻意不启用 gateway/routing HTTP 特性；原生主路径为
+# Bitswap + Kademlia，并通过 TCP/QUIC 直接与 Kubo/Helia 节点互操作。
+rust-ipfs = { version = "0.16.0", default-features = false, features = ["dns", "ed25519", "noise", "quic", "tcp", "websocket"] }
+cid = "0.11"
+
+# 内容摘要校验（真实 SHA-256）
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = "3"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+base64 = "0.22"
+zeroize = "1"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+
+# 流式传输字节块
+bytes = "1"
+
+# 媒体库：依赖 Symphonia 解码器插件（rlib 静态链接）读取元数据
+symphonia-decoder = { path = "../plugins/symphonia-decoder" }
+walkdir = "2"
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+wiremock = "0.6"
+# 端到端 FFI 测试：加载真实 null-output 动态库（rlib+cdylib，测试时同时产出 .so）。
+null-output = { path = "../plugins/null-output" }

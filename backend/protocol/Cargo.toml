@@ -1,0 +1,11 @@
+[package]
+name = "jimmusic-protocol"
+version = "2.0.0"
+edition = "2021"
+description = "JimMusic 版本化网络对象、服务 DTO 与错误/事件契约"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"

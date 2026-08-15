@@ -1,0 +1,56 @@
+# JimMusic 2.0 发布验收记录
+
+基线日期：2026-08-15
+
+## 当前本地证据
+
+| 门禁 | 当前结果 | 证据范围 |
+|---|---|---|
+| Rust format | 通过 | workspace |
+| Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
+| Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
+| Rust tests | 通过（217） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成，workspace/all targets/all features |
+| 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId |
+| Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
+| Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
+| Flutter tests | 通过（20） | provider/model/widget、Rust 播放/输出会话/节点 FFI |
+| Rust release build | 通过 | 当前 Linux host，workspace |
+| Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
+| Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
+| Helia 浏览器节点 | 通过 | 生产依赖审计 0 漏洞、bundle 构建通过；Rust 节点到 Helia 直连取回并验证 600,000 字节 UnixFS 对象 |
+| Release binary smoke | 通过 | health/未授权拒绝/原生节点传输状态；优雅退出后以同一 repo 重启并保持稳定 PeerId |
+| 验收报告校验器 | 通过（5） | 自动读取 134 项 P0，拒绝模拟器、P0 unsupported、资源回退超限与不完整报告 |
+| GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 63、部分实现 59、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+
+## CI 候选门禁
+
+`.github/workflows/release.yml` 对同一 tag/commit 执行：
+
+- Rust fmt、Clippy、完整测试；
+- Linux、macOS、Windows 后端；
+- Android、iOS、HarmonyOS、Windows、Linux、macOS、Web Flutter 产物；
+- Android/iOS/macOS/Windows 发布签名和 Apple notarization；
+- 对应提交源码包、SHA256SUMS、SPDX SBOM 与 build provenance attestation；
+- 任一必需 job 失败时不创建稳定 Release。
+
+HarmonyOS 需要固定到仓库变量 `FLUTTER_OHOS_REF` 指定的 commit，并由
+`[self-hosted, harmonyos]` runner 产生 HAP。release job 使用 OpenHarmony hapsigner 验签，并把
+提取的证书链 SHA-256 与 `HARMONY_RELEASE_CERT_CHAIN_SHA256` 比较；runner 必须预先配置对应
+release 签名。签名密钥、证书和 runner 不在仓库中，因此工作流存在不等于产物已经验收。
+
+## 尚未取得的必需证据
+
+- 七个平台同一候选版本的安装、首次启动、断网曲库/播放/Seek/歌单恢复；
+- 真实浏览器经测试中继、原生/Helia 对 Kubo，以及 Android/iOS/HarmonyOS 的关闭公共网关 P2P；
+- Wasmtime 沙箱已通过本机恶意样本；仍缺 Web/iOS/HarmonyOS 执行载体和七端恶意插件外证；
+- WASAPI Exclusive、CoreAudio Hog、ALSA hw/PipeWire、DSD Native/DoP 的真实设备报告；
+- 两小时播放内存、起播/Seek/UI P95、耗电/带宽基线、无障碍审计；
+- 升级、降级、schema 迁移、杀进程/断电和安全模式恢复矩阵；
+- 受控 tag workflow 的签名产物、SBOM、摘要、provenance 和下载复验。
+
+## 发布结论
+
+当前仓库不得发布为“满足全部需求的 JimMusic 2.0 稳定版”。它可以发布为明确标注已知限制的
+Release Candidate 源码基线；稳定版必须以 `docs/REQUIREMENTS_TRACEABILITY.md` 中所有 P0
+阻断项关闭，并由七个物理 runner 对同一 commit 产生无豁免报告为前提。

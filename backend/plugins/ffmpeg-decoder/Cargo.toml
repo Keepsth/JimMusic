@@ -1,6 +1,23 @@
 [package]
 name = "ffmpeg-decoder"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
+description = "JimMusic FFmpeg 解码器插件（动态库）"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[build-dependencies]
+# build.rs 预留用于编译第三方 FFmpeg 动态库。
 
 [dependencies]
+plugin-abi = { path = "../../plugin-abi" }
+# 真实解码引擎：FFmpeg 绑定需系统 libav（见 build.rs 预留）；在无 libav 环境下，
+# 直接以纯 Rust 的 symphonia 作为解码后端，保证本插件功能完整、可独立动态加载，
+# 且不与 symphonia-decoder 插件的 C ABI 符号产生链接冲突。
+symphonia = { version = "0.6", features = ["mp3", "aac", "isomp4", "wav", "flac", "ogg", "vorbis", "pcm"] }
+thiserror = "2"
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

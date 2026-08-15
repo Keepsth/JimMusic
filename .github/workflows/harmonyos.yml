@@ -1,0 +1,83 @@
+name: Flutter (HarmonyOS)
+
+# HarmonyOS 构建基于 OpenHarmony 生态的 Flutter 适配仓库 flutter_flutter
+# （原 flutter-ohos / ohos 分支），而非上游 Flutter。
+# 参考：https://gitcode.com/oh-flutter/flutter_flutter 或 gitee.com/openharmony-sig/flutter_flutter
+#
+# 该工作流在「预装了 OpenHarmony SDK 与 DevEco 命令行工具」的自托管 runner 上执行；
+# 也可通过 workflow_dispatch 手动触发。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/harmonyos.yml'
+  pull_request:
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/harmonyos.yml'
+  workflow_dispatch:
+
+env:
+  # OpenHarmony Flutter SDK 仓库（ohos 分支）
+  FLUTTER_OHOS_REPO: 'https://gitcode.com/oh-flutter/flutter_flutter.git'
+  FLUTTER_OHOS_DIR: '/opt/flutter-ohos'
+
+jobs:
+  build-hap:
+    name: Build HAP (Flutter on HarmonyOS)
+    # 需要自行提供具备 OpenHarmony SDK 的 runner，并打上对应标签。
+    runs-on: [self-hosted, harmonyos]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache flutter_flutter SDK
+        id: cache-sdk
+        uses: actions/cache@v4
+        with:
+          path: /opt/flutter-ohos
+          key: flutter-ohos-${{ vars.FLUTTER_OHOS_REF }}-${{ hashFiles('.github/workflows/harmonyos.yml') }}
+
+      - name: Clone flutter_flutter (ohos)
+        if: steps.cache-sdk.outputs.cache-hit != 'true'
+        run: |
+          test -n "${{ vars.FLUTTER_OHOS_REF }}" || { echo "FLUTTER_OHOS_REF repository variable must pin a tested commit"; exit 1; }
+          git clone "$FLUTTER_OHOS_REPO" "$FLUTTER_OHOS_DIR"
+          git -C "$FLUTTER_OHOS_DIR" checkout --detach "${{ vars.FLUTTER_OHOS_REF }}"
+
+      - name: Verify pinned SDK revision
+        run: |
+          test -n "${{ vars.FLUTTER_OHOS_REF }}"
+          test "$(git -C "$FLUTTER_OHOS_DIR" rev-parse HEAD)" = "$(git -C "$FLUTTER_OHOS_DIR" rev-parse "${{ vars.FLUTTER_OHOS_REF }}^{commit}")"
+
+      - name: Set up PATH
+        run: echo "$FLUTTER_OHOS_DIR/bin" >> "$GITHUB_PATH"
+
+      - name: Report Flutter (ohos) version
+        run: flutter --version
+
+      - name: Install dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+
+      - name: Ensure ohos platform directory
+        working-directory: flutter_app
+        # 若仓库尚未提交 ohos/ 平台目录，则生成；已存在则跳过。
+        run: |
+          if [ ! -d ohos ]; then
+            flutter create --platforms ohos --org com.jimmusic .
+          fi
+
+      - name: Build HAP (release)
+        working-directory: flutter_app
+        run: flutter build hap --release
+
+      - name: Upload HAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jimmusic-harmonyos-hap
+          path: flutter_app/ohos/entry/build/default/outputs/default/*.hap
+          if-no-files-found: error
+          retention-days: 7

@@ -1,6 +1,9 @@
 # Rust
 /target/
 /**/*.rs.bk
+/backend/target/
+/backend/**/repo*/
+/backend/**/tmprepo*/
 
 # Flutter
 /.dart_tool/
@@ -8,9 +11,28 @@
 /.idea/
 /*.iml
 
-# ArkUI / HMS Dev
-/.hsp/
+# Flutter 构建产物（web）
+/build/
+
+# web_node 构建的 sourcemap（bundle 本体随 web/ 静态资源提交）
+/flutter_app/web/*.js.map
+
+# HarmonyOS（Flutter ohos fork 生成）构建产物；ohos/ 平台目录本身需提交
+/flutter_app/ohos/.hvigor/
+/flutter_app/ohos/.cxx/
+/flutter_app/ohos/oh_modules/
+/flutter_app/web_node/node_modules/
+/flutter_app/android/app/src/main/jniLibs/
+/flutter_app/ios/Libraries/
+/flutter_app/ohos/entry/libs/
+/flutter_app/ohos/build/
+/flutter_app/ohos/**/build/
+*.hsp
+*.har
 /out/
+/.hvigor/
+/oh_modules/
 
 # FFmpeg 编译产物
 /third_party/ffmpeg/build/
+.toolchain/

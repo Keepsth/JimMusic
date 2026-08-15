@@ -1,0 +1,94 @@
+name: Backend (Rust)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # 静态检查 + 单元测试（Linux，最快反馈）
+  lint-and-test:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable) + clippy + rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Build FFI plugin libraries
+        run: cargo build --locked --workspace --all-features
+
+      - name: Run tests
+        run: cargo test --locked --all --all-features
+
+      - name: Measure coverage
+        run: |
+          rustup component add llvm-tools-preview
+          cargo install cargo-llvm-cov --locked
+          cargo llvm-cov --fail-under-lines 80
+
+  # 跨平台编译矩阵：验证三端插件产物可生成
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+
+      - name: Build (release)
+        run: cargo build --locked --release --workspace
+
+      - name: Smoke run plugin-manager health (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          ./target/release/plugin-manager &
+          PM_PID=$!
+          OK=""
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/health; then OK="yes"; break; fi
+            sleep 0.5
+          done
+          kill "$PM_PID" 2>/dev/null || true
+          [ -n "$OK" ] || { echo "plugin-manager /health 未就绪"; exit 1; }

@@ -1,84 +1,108 @@
 import 'package:flutter/material.dart';
-import '../models/music.dart';
+import 'package:provider/provider.dart';
 
+import '../models/music.dart';
+import '../providers/music_player_provider.dart';
+import 'geek_cover.dart';
+
+/// 音乐列表项：展示曲目信息、收藏状态与可选操作。
 class MusicListItem extends StatelessWidget {
   final Music music;
   final bool isPlaying;
   final VoidCallback onTap;
+
+  /// 可选的额外 trailing 控件（如播放列表移除按钮）。
+  final Widget? trailingExtra;
+
+  /// 是否显示收藏心形按钮（默认显示）。
+  final bool showFavorite;
 
   const MusicListItem({
     super.key,
     required this.music,
     required this.isPlaying,
     required this.onTap,
+    this.trailingExtra,
+    this.showFavorite = true,
   });
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      leading: Hero(
-        tag: 'album_art_${music.id}',
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(8),
-          child: SizedBox(
-            width: 56,
-            height: 56,
-            child: Container(
-              color: Colors.grey[800],
-              child: const Icon(
-                Icons.music_note,
-                color: Colors.grey,
-                size: 24,
+    final scheme = Theme.of(context).colorScheme;
+    final primaryText = scheme.onSurface;
+    final secondaryText = scheme.onSurfaceVariant;
+
+    return Consumer<MusicPlayerProvider>(
+      builder: (context, player, _) {
+        final favorite = player.isFavorite(music);
+        return ListTile(
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 12,
+            vertical: 2,
+          ),
+          leading: GeekCover(
+            seed: music.id,
+            label: music.title,
+            size: 44,
+            borderRadius: BorderRadius.circular(2),
+          ),
+          title: Text(
+            music.title,
+            style: TextStyle(
+              color: isPlaying ? scheme.primary : primaryText,
+              fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
+              fontFamilyFallback: const ['monospace'],
+              fontSize: 14,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          subtitle: Text(
+            music.availability == TrackAvailability.available
+                ? (music.album.isNotEmpty
+                      ? '${music.artist} • ${music.album}'
+                      : music.artist)
+                : '${music.artist} • ${music.unavailableReason ?? music.availability.name}',
+            style: TextStyle(
+              color: music.availability == TrackAvailability.available
+                  ? secondaryText
+                  : scheme.error,
+              fontSize: 11,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                music.duration,
+                style: TextStyle(color: secondaryText, fontSize: 11),
               ),
-            ),
+              if (showFavorite) ...[
+                const SizedBox(width: 2),
+                IconButton(
+                  icon: Icon(
+                    favorite ? Icons.favorite : Icons.favorite_border,
+                    color: favorite ? scheme.primary : secondaryText,
+                    size: 18,
+                  ),
+                  onPressed: () => player.toggleFavorite(music),
+                ),
+              ],
+              if (music.availability != TrackAvailability.available)
+                Icon(Icons.cloud_off_outlined, color: scheme.error, size: 18),
+              if (isPlaying)
+                Icon(Icons.play_arrow, color: scheme.primary, size: 18),
+              if (trailingExtra != null) trailingExtra!,
+            ],
           ),
-        ),
-      ),
-      title: Text(
-        music.title,
-        style: TextStyle(
-          color: isPlaying ? const Color(0xFF1DB954) : Colors.white,
-          fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        '${music.artist} • ${music.album}',
-        style: const TextStyle(
-          color: Colors.grey,
-          fontSize: 12,
-        ),
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            music.duration,
-            style: const TextStyle(
-              color: Colors.grey,
-              fontSize: 12,
-            ),
-          ),
-          const SizedBox(width: 8),
-          if (isPlaying)
-            const Icon(
-              Icons.play_arrow,
-              color: Color(0xFF1DB954),
-              size: 20,
-            )
-          else
-            const Icon(
-              Icons.more_vert,
-              color: Colors.grey,
-              size: 20,
-            ),
-        ],
-      ),
-      onTap: onTap,
+          onTap: music.availability == TrackAvailability.available
+              ? onTap
+              : null,
+        );
+      },
     );
   }
 }

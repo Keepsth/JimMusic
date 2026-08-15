@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/music_player_provider.dart';
 
+import '../providers/music_player_provider.dart';
+import 'geek_cover.dart';
+
+/// 底部迷你播放控制条。
 class NowPlayingBar extends StatelessWidget {
   final VoidCallback onTap;
 
-  const NowPlayingBar({
-    super.key,
-    required this.onTap,
-  });
+  const NowPlayingBar({super.key, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Consumer<MusicPlayerProvider>(
       builder: (context, player, child) {
         final music = player.currentMusic;
@@ -20,59 +21,40 @@ class NowPlayingBar extends StatelessWidget {
         return GestureDetector(
           onTap: onTap,
           child: Container(
-            height: 64,
+            height: 52,
             decoration: BoxDecoration(
-              color: const Color(0xFF2A2A2A),
+              color: scheme.surfaceContainerHighest,
               border: Border(
-                top: BorderSide(
-                  color: Colors.grey.withValues(alpha: 0.2),
-                  width: 0.5,
-                ),
+                top: BorderSide(color: scheme.outlineVariant, width: 1),
               ),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
               child: Row(
                 children: [
-                  // 专辑封面
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: SizedBox(
-                      width: 48,
-                      height: 48,
-                      child: Container(
-                        color: Colors.grey[800],
-                        child: const Icon(
-                          Icons.music_note,
-                          color: Colors.grey,
-                          size: 24,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  
-                  // 歌曲信息
+                  GeekCover(seed: music.id, label: music.title, size: 40),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
                           music.title,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 14,
+                          style: TextStyle(
+                            color: scheme.onSurface,
+                            fontSize: 13,
                             fontWeight: FontWeight.w500,
+                            fontFamilyFallback: const ['monospace'],
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
                           music.artist,
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 12,
+                          style: TextStyle(
+                            color: scheme.onSurfaceVariant,
+                            fontSize: 11,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -80,23 +62,29 @@ class NowPlayingBar extends StatelessWidget {
                       ],
                     ),
                   ),
-                  
-                  // 播放控制按钮
                   IconButton(
                     onPressed: player.togglePlayPause,
-                    icon: Icon(
-                      player.isPlaying ? Icons.pause : Icons.play_arrow,
-                      color: Colors.white,
-                      size: 24,
-                    ),
+                    icon: player.isBuffering
+                        ? SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: scheme.primary,
+                            ),
+                          )
+                        : Icon(
+                            player.isPlaying ? Icons.pause : Icons.play_arrow,
+                            color: scheme.primary,
+                            size: 22,
+                          ),
                   ),
-                  
                   IconButton(
                     onPressed: player.next,
-                    icon: const Icon(
+                    icon: Icon(
                       Icons.skip_next,
-                      color: Colors.white,
-                      size: 24,
+                      color: scheme.onSurface,
+                      size: 22,
                     ),
                   ),
                 ],

@@ -1,0 +1,11 @@
+[package]
+name = "plugin-abi"
+version = "2.0.0"
+edition = "2021"
+description = "JimMusic 插件 ABI：核心与插件之间的统一 C ABI 类型定义"
+
+[lib]
+# 该 crate 仅作为类型/宏定义的共享库，被核心与各插件同时链接。
+crate-type = ["rlib"]
+
+[dependencies]

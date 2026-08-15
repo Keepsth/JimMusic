@@ -1,0 +1,15 @@
+[package]
+name = "null-output"
+version = "2.0.0"
+edition = "2021"
+description = "JimMusic 参考音频输出插件：null 后端，实现完整输出 ABI（句柄化 + 推模型 + 有界缓冲背压）"
+
+[lib]
+name = "null_output"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+plugin-abi = { path = "../../plugin-abi" }
+
+# 便于在输出插件内计算/序列化能力 JSON（与 core 的 OutputCapabilities 约定一致）。
+serde_json = "1"

@@ -1,0 +1,14 @@
+[package]
+name = "app-core-static"
+version = "2.0.0"
+edition = "2021"
+description = "Static-link wrapper for the JimMusic iOS Rust bridge"
+publish = false
+
+[lib]
+name = "app_core_static"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+
+[dependencies]
+app-core = { path = "../app-core" }

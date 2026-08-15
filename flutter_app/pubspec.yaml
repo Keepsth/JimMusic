@@ -1,5 +1,5 @@
 name: flutter_app
-description: "A new Flutter project."
+description: "JimMusic 2.0 local-first, content-addressed cross-platform music player."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 2.0.0+20000
 
 environment:
   sdk: ^3.8.1
@@ -37,6 +37,21 @@ dependencies:
   
   # State management
   provider: ^6.1.1
+
+  # 本地持久化（收藏/播放列表/主题）
+  shared_preferences: ^2.3.2
+
+  # 本地音频扫描/导入
+  file_picker: ^8.1.2
+
+  # 真实音频播放
+  just_audio: ^0.9.46
+
+  # dart:ffi 辅助（C 字符串、内存分配、回调），用于 Rust 宿主桥
+  ffi: ^2.1.0
+
+  # 应用支持目录，用于原生 IPFS 节点的稳定身份与持久仓库
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
@@ -61,8 +76,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  assets:
-    - assets/
+  # assets:
+  #   - assets/
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

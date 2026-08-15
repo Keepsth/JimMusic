@@ -1,0 +1,145 @@
+name: Frontend (Flutter)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/flutter.yml'
+  pull_request:
+    paths:
+      - 'flutter_app/**'
+      - '.github/workflows/flutter.yml'
+
+env:
+  FLUTTER_VERSION: 'stable'
+
+jobs:
+  analyze-test:
+    name: Analyze & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Report Flutter version
+        run: flutter --version
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Static analysis
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: web
+            build_cmd: flutter build web --release
+            artifact_path: flutter_app/build/web
+          - os: ubuntu-latest
+            target: android-apk
+            build_cmd: flutter build apk --release
+            artifact_path: flutter_app/build/app/outputs/flutter-apk/app-release.apk
+          - os: ubuntu-latest
+            target: linux
+            build_cmd: flutter build linux --release
+            artifact_path: flutter_app/build/linux/x64/release/bundle
+          - os: windows-latest
+            target: windows
+            build_cmd: flutter build windows --release
+            artifact_path: flutter_app/build/windows/x64/runner/Release
+          - os: macos-latest
+            target: macos
+            build_cmd: flutter build macos --release
+            artifact_path: flutter_app/build/macos/Build/Products/Release/JimMusic.app
+          - os: macos-latest
+            target: ios-unsigned
+            build_cmd: flutter build ios --release --no-codesign
+            artifact_path: flutter_app/build/ios/iphoneos/Runner.app
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Setup Rust for desktop bridge
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Java (for Android)
+        if: matrix.target == 'android-apk'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Linux desktop dependencies
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libasound2-dev
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build ${{ matrix.target }}
+        run: ${{ matrix.build_cmd }}
+
+      - name: Build Rust playback bridge
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos'
+        working-directory: backend
+        run: cargo build --locked --release -p app-core -p null-output -p alsa-output
+
+      - name: Inject Rust bridge and output plugins
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos'
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            linux)
+              destination="flutter_app/build/linux/x64/release/bundle/lib"
+              mkdir -p "$destination"
+              cp backend/target/release/libapp_core.so backend/target/release/libnull_output.so backend/target/release/libalsa_output.so "$destination/"
+              ;;
+            windows)
+              destination="flutter_app/build/windows/x64/runner/Release"
+              cp backend/target/release/app_core.dll backend/target/release/null_output.dll backend/target/release/alsa_output.dll "$destination/"
+              ;;
+            macos)
+              destination="flutter_app/build/macos/Build/Products/Release/JimMusic.app/Contents/Frameworks"
+              mkdir -p "$destination"
+              cp backend/target/release/libapp_core.dylib backend/target/release/libnull_output.dylib backend/target/release/libalsa_output.dylib "$destination/"
+              ;;
+          esac
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jimmusic-${{ matrix.target }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 7

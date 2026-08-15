@@ -1,0 +1,531 @@
+name: Release Candidate
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (for example 2.0.0-rc.1)'
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  verify:
+    name: Exact-commit verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: flutter_app/web_node/package-lock.json
+      - name: Rust format
+        working-directory: backend
+        run: cargo fmt --all --check
+      - name: Rust lint
+        working-directory: backend
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - name: Build Rust FFI libraries
+        working-directory: backend
+        run: cargo build --locked --workspace --all-features
+      - name: Rust tests
+        working-directory: backend
+        run: cargo test --locked --workspace --all-targets --all-features
+      - name: Flutter dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+      - name: Flutter analysis
+        working-directory: flutter_app
+        run: flutter analyze
+      - name: Flutter tests
+        working-directory: flutter_app
+        run: flutter test
+      - name: Web Helia dependency audit and bundle
+        working-directory: flutter_app/web_node
+        run: |
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm run build
+          npm run test:interop
+          git diff --exit-code -- ../web/helia_node.js ../web/helia_node.js.map
+      - name: Acceptance report validator tests
+        run: node --test scripts/tests/validate_acceptance_report.test.mjs
+
+  backend:
+    name: Backend ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            extension: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            extension: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            extension: zip
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: backend
+      - name: Build release workspace
+        working-directory: backend
+        run: cargo build --locked --release --workspace --target ${{ matrix.target }}
+      - name: Package backend and plugins
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          target_dir="target/${{ matrix.target }}/release"
+          package_dir="dist/jimmusic-backend-${{ matrix.target }}"
+          mkdir -p "$package_dir"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "$target_dir/plugin-manager.exe" "$package_dir/"
+          else
+            cp "$target_dir/plugin-manager" "$package_dir/"
+          fi
+          find "$target_dir" -maxdepth 1 -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' \) -exec cp {} "$package_dir/" \;
+          if [ "${{ matrix.extension }}" = "zip" ]; then
+            7z a "dist/jimmusic-backend-${{ matrix.target }}.zip" "./$package_dir/*"
+          else
+            tar -czf "dist/jimmusic-backend-${{ matrix.target }}.tar.gz" -C dist "jimmusic-backend-${{ matrix.target }}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-${{ matrix.target }}
+          path: backend/dist/*.${{ matrix.extension }}
+          if-no-files-found: error
+
+  flutter:
+    name: Flutter ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: android
+          - os: ubuntu-latest
+            target: web
+          - os: ubuntu-latest
+            target: linux
+          - os: windows-latest
+            target: windows
+          - os: macos-latest
+            target: macos
+          - os: macos-latest
+            target: ios
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos' || matrix.target == 'android' || matrix.target == 'ios'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos' || matrix.target == 'android' || matrix.target == 'ios'
+        with:
+          workspaces: backend
+      - uses: actions/setup-java@v4
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Linux desktop dependencies
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libasound2-dev
+      - name: Install Flutter dependencies
+        working-directory: flutter_app
+        run: flutter pub get
+      - name: Configure Android distribution signing
+        if: matrix.target == 'android'
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$ANDROID_KEYSTORE_BASE64"
+          test -n "$ANDROID_STORE_PASSWORD"
+          test -n "$ANDROID_KEY_ALIAS"
+          test -n "$ANDROID_KEY_PASSWORD"
+          keystore_path="$GITHUB_WORKSPACE/flutter_app/android/app/jimmusic-release.jks"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$keystore_path"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$keystore_path" "$ANDROID_STORE_PASSWORD" "$ANDROID_KEY_ALIAS" "$ANDROID_KEY_PASSWORD" \
+            > "$GITHUB_WORKSPACE/flutter_app/android/key.properties"
+      - name: Configure iOS distribution signing
+        if: matrix.target == 'ios'
+        shell: bash
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+          IOS_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+          IOS_PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
+        run: |
+          set -euo pipefail
+          test -n "$IOS_CERTIFICATE_BASE64"
+          test -n "$IOS_CERTIFICATE_PASSWORD"
+          test -n "$IOS_PROVISIONING_PROFILE_BASE64"
+          test -n "$IOS_KEYCHAIN_PASSWORD"
+          test -n "$IOS_DEVELOPMENT_TEAM"
+          test -n "$IOS_PROFILE_NAME"
+          certificate_path="$RUNNER_TEMP/jimmusic-distribution.p12"
+          profile_path="$RUNNER_TEMP/jimmusic.mobileprovision"
+          keychain_path="$RUNNER_TEMP/jimmusic-signing.keychain-db"
+          echo "$IOS_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          echo "$IOS_PROVISIONING_PROFILE_BASE64" | base64 --decode > "$profile_path"
+          security create-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$IOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$IOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -k "$IOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          profile_plist="$RUNNER_TEMP/jimmusic-profile.plist"
+          security cms -D -i "$profile_path" > "$profile_plist"
+          profile_uuid="$(/usr/libexec/PlistBuddy -c 'Print UUID' "$profile_plist")"
+          cp "$profile_path" "$HOME/Library/MobileDevice/Provisioning Profiles/$profile_uuid.mobileprovision"
+          export_options="$RUNNER_TEMP/ExportOptions.plist"
+          cat > "$export_options" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>teamID</key><string>$IOS_DEVELOPMENT_TEAM</string>
+            <key>provisioningProfiles</key><dict>
+              <key>com.keepsth.jimmusic</key><string>$IOS_PROFILE_NAME</string>
+            </dict>
+          </dict></plist>
+          EOF
+      - name: Configure macOS Developer ID signing
+        if: matrix.target == 'macos'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_CERTIFICATE_BASE64"
+          test -n "$MACOS_CERTIFICATE_PASSWORD"
+          test -n "$MACOS_KEYCHAIN_PASSWORD"
+          certificate_path="$RUNNER_TEMP/jimmusic-developer-id.p12"
+          keychain_path="$RUNNER_TEMP/jimmusic-macos.keychain-db"
+          echo "$MACOS_CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security set-keychain-settings -lut 21600 "$keychain_path"
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
+          security import "$certificate_path" -P "$MACOS_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+          security list-keychain -d user -s "$keychain_path"
+          security set-key-partition-list -S apple-tool:,apple: -k "$MACOS_KEYCHAIN_PASSWORD" "$keychain_path"
+      - name: Build app-embedded Rust node for Android
+        if: matrix.target == 'android'
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+          cargo install cargo-ndk --version 4.1.2 --locked
+          cargo ndk -p 21 \
+            -t arm64-v8a -t armeabi-v7a -t x86_64 \
+            -o ../flutter_app/android/app/src/main/jniLibs \
+            build --locked --release -p app-core
+      - name: Build and link app-embedded Rust node for iOS
+        if: matrix.target == 'ios'
+        shell: bash
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-apple-ios
+          cargo build --locked --release -p app-core-static --target aarch64-apple-ios
+          mkdir -p ../flutter_app/ios/Libraries
+          cp target/aarch64-apple-ios/release/libapp_core_static.a \
+            ../flutter_app/ios/Libraries/libapp_core.a
+      - name: Build target
+        shell: bash
+        working-directory: flutter_app
+        env:
+          JIMMUSIC_DEVELOPMENT_TEAM: ${{ secrets.IOS_DEVELOPMENT_TEAM }}
+          JIMMUSIC_PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
+          ORG_GRADLE_PROJECT_jimmusicRequireReleaseSigning: ${{ matrix.target == 'android' && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            android) flutter build apk --release; flutter build appbundle --release ;;
+            web) flutter build web --release ;;
+            linux) flutter build linux --release ;;
+            windows) flutter build windows --release ;;
+            macos) flutter build macos --release ;;
+            ios) flutter build ipa --release --export-options-plist="$RUNNER_TEMP/ExportOptions.plist" ;;
+          esac
+      - name: Build bundled Rust playback bridge
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos'
+        working-directory: backend
+        run: cargo build --locked --release -p app-core -p null-output -p alsa-output
+      - name: Inject Rust bridge and output plugins into desktop bundle
+        if: matrix.target == 'linux' || matrix.target == 'windows' || matrix.target == 'macos'
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            linux)
+              destination="flutter_app/build/linux/x64/release/bundle/lib"
+              mkdir -p "$destination"
+              cp backend/target/release/libapp_core.so backend/target/release/libnull_output.so backend/target/release/libalsa_output.so "$destination/"
+              ;;
+            windows)
+              destination="flutter_app/build/windows/x64/runner/Release"
+              cp backend/target/release/app_core.dll backend/target/release/null_output.dll backend/target/release/alsa_output.dll "$destination/"
+              ;;
+            macos)
+              destination="flutter_app/build/macos/Build/Products/Release/JimMusic.app/Contents/Frameworks"
+              mkdir -p "$destination"
+              cp backend/target/release/libapp_core.dylib backend/target/release/libnull_output.dylib backend/target/release/libalsa_output.dylib "$destination/"
+              ;;
+          esac
+      - name: Sign Windows binaries
+        if: matrix.target == 'windows'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_BASE64 -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "Windows signing secrets are required" }
+          $certificatePath = Join-Path $env:RUNNER_TEMP 'jimmusic-signing.pfx'
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $signTool = (Get-Command signtool.exe -ErrorAction Stop).Source
+          Get-ChildItem 'flutter_app/build/windows/x64/runner/Release' -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
+            & $signTool sign /fd SHA256 /td SHA256 /tr 'http://timestamp.digicert.com' /f $certificatePath /p $env:WINDOWS_CERTIFICATE_PASSWORD $_.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($_.FullName)" }
+          }
+      - name: Sign and notarize macOS app
+        if: matrix.target == 'macos'
+        shell: bash
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          test -n "$MACOS_SIGNING_IDENTITY"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_APP_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+          app="flutter_app/build/macos/Build/Products/Release/JimMusic.app"
+          codesign --deep --force --options runtime --timestamp --entitlements flutter_app/macos/Runner/Release.entitlements --sign "$MACOS_SIGNING_IDENTITY" "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          notarization_zip="$RUNNER_TEMP/jimmusic-notarization.zip"
+          ditto -c -k --keepParent "$app" "$notarization_zip"
+          xcrun notarytool submit "$notarization_zip" --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+      - name: Package target
+        shell: bash
+        working-directory: flutter_app
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          case "${{ matrix.target }}" in
+            android)
+              cp build/app/outputs/flutter-apk/app-release.apk dist/jimmusic-android.apk
+              cp build/app/outputs/bundle/release/app-release.aab dist/jimmusic-android.aab
+              ;;
+            web) tar -czf dist/jimmusic-web.tar.gz -C build web ;;
+            linux) tar -czf dist/jimmusic-linux.tar.gz -C build/linux/x64/release bundle ;;
+            windows) 7z a dist/jimmusic-windows.zip ./build/windows/x64/runner/Release/* ;;
+            macos) ditto -c -k --keepParent build/macos/Build/Products/Release/JimMusic.app dist/jimmusic-macos.zip ;;
+            ios) cp build/ios/ipa/*.ipa dist/jimmusic-ios.ipa ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-${{ matrix.target }}
+          path: flutter_app/dist/*
+          if-no-files-found: error
+
+  harmonyos:
+    name: HarmonyOS HAP
+    needs: verify
+    runs-on: [self-hosted, harmonyos]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require and load pinned flutter_flutter SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${{ vars.FLUTTER_OHOS_REF }}" || { echo "FLUTTER_OHOS_REF must pin a tested commit"; exit 1; }
+          if [ ! -d /opt/flutter-ohos/.git ]; then
+            git clone https://gitcode.com/oh-flutter/flutter_flutter.git /opt/flutter-ohos
+          fi
+          git -C /opt/flutter-ohos fetch origin "${{ vars.FLUTTER_OHOS_REF }}"
+          git -C /opt/flutter-ohos checkout --detach "${{ vars.FLUTTER_OHOS_REF }}"
+      - name: Build HAP
+        shell: bash
+        working-directory: flutter_app
+        env:
+          HAP_SIGN_TOOL_JAR: ${{ vars.HAP_SIGN_TOOL_JAR }}
+          HARMONY_RELEASE_CERT_CHAIN_SHA256: ${{ vars.HARMONY_RELEASE_CERT_CHAIN_SHA256 }}
+        run: |
+          set -euo pipefail
+          export PATH="/opt/flutter-ohos/bin:$PATH"
+          test -f "$HAP_SIGN_TOOL_JAR"
+          test -n "$HARMONY_RELEASE_CERT_CHAIN_SHA256"
+          flutter pub get
+          test -d ohos || flutter create --platforms ohos --org com.jimmusic .
+          command -v jimmusic-build-ohos-rust
+          jimmusic-build-ohos-rust \
+            --workspace "$GITHUB_WORKSPACE/backend" \
+            --output "$GITHUB_WORKSPACE/flutter_app/ohos/entry/libs/arm64-v8a/libapp_core.so"
+          test -f ohos/entry/libs/arm64-v8a/libapp_core.so
+          flutter build hap --release
+          hap="$(find ohos/entry/build/default/outputs/default -maxdepth 1 -name '*.hap' -print -quit)"
+          test -n "$hap"
+          cert_chain="$RUNNER_TEMP/jimmusic-harmony-cert-chain.pem"
+          profile="$RUNNER_TEMP/jimmusic-harmony-profile.p7b"
+          java -jar "$HAP_SIGN_TOOL_JAR" verify-app -inFile "$hap" -outCertChain "$cert_chain" -outProfile "$profile" -inForm zip
+          actual_cert_chain_sha256="$(sha256sum "$cert_chain" | cut -d ' ' -f 1)"
+          test "$actual_cert_chain_sha256" = "$HARMONY_RELEASE_CERT_CHAIN_SHA256"
+          mkdir -p dist
+          cp "$hap" dist/jimmusic-harmonyos.hap
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flutter-harmonyos
+          path: flutter_app/dist/*.hap
+          if-no-files-found: error
+
+  acceptance:
+    name: Physical acceptance ${{ matrix.platform }}
+    needs: [flutter, harmonyos]
+    runs-on: [self-hosted, jimmusic-acceptance, "${{ matrix.platform }}"]
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [windows, macos, linux, android, ios, harmonyos, web]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          name: flutter-${{ matrix.platform }}
+          path: candidate-artifacts
+      - name: Run candidate on the physical lab target
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v jimmusic-acceptance
+          output="$RUNNER_TEMP/jimmusic-acceptance-${{ matrix.platform }}"
+          mkdir -p "$output"
+          jimmusic-acceptance run \
+            --platform "${{ matrix.platform }}" \
+            --commit "$GITHUB_SHA" \
+            --artifacts "$GITHUB_WORKSPACE/candidate-artifacts" \
+            --output "$output"
+          node scripts/validate_acceptance_report.mjs \
+            --commit "$GITHUB_SHA" \
+            --platform "${{ matrix.platform }}" \
+            "$output/${{ matrix.platform }}.json"
+          tar -czf "$output/acceptance-${{ matrix.platform }}.tar.gz" -C "$output" \
+            --exclude='acceptance-*.tar.gz' .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: acceptance-${{ matrix.platform }}
+          path: |
+            ${{ runner.temp }}/jimmusic-acceptance-${{ matrix.platform }}/${{ matrix.platform }}.json
+            ${{ runner.temp }}/jimmusic-acceptance-${{ matrix.platform }}/acceptance-${{ matrix.platform }}.tar.gz
+          if-no-files-found: error
+
+  source:
+    name: Corresponding source
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Archive exact source revision
+        run: git archive --format=tar.gz --output=jimmusic-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corresponding-source
+          path: jimmusic-source.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish only after all seven clients succeed
+    needs: [verify, backend, flutter, harmonyos, acceptance, source]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Validate the complete seven-platform evidence set
+        run: |
+          node scripts/validate_acceptance_report.mjs \
+            --commit "$GITHUB_SHA" \
+            --require-all-platforms \
+            release-assets/windows.json \
+            release-assets/macos.json \
+            release-assets/linux.json \
+            release-assets/android.json \
+            release-assets/ios.json \
+            release-assets/harmonyos.json \
+            release-assets/web.json
+      - name: Write release metadata
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-$GITHUB_REF_NAME}"
+          jq -n --arg version "$version" --arg commit "$GITHUB_SHA" --arg generated_at "$(date -u +%FT%TZ)" \
+            '{schema_version:1,version:$version,commit:$commit,generated_at:$generated_at,platforms:["windows","macos","linux","android","ios","harmonyos","web"]}' \
+            > release-assets/release-metadata.json
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: spdx-json
+          output-file: release-assets/sbom.spdx.json
+      - name: Generate checksums
+        working-directory: release-assets
+        run: find . -maxdepth 1 -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      - name: Attest release assets
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release-assets/*
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          fail_on_unmatched_files: true
+          files: release-assets/*

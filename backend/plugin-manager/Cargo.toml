@@ -1,6 +1,55 @@
 [package]
 name = "plugin-manager"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
+description = "JimMusic 插件管理器：RESTful 接口 + IPFS 源 + 本地仓库缓存"
+
+[lib]
+name = "plugin_manager"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plugin-manager"
+path = "src/main.rs"
 
 [dependencies]
+plugin-abi = { path = "../plugin-abi" }
+app-core = { path = "../app-core" }
+jimmusic-protocol = { path = "../protocol" }
+
+# Web 框架
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "fs", "io-util", "time"] }
+tower-http = { version = "0.6", features = ["trace", "cors"] }
+tower = "0.5"
+
+# 序列化 / 错误
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+# 元数据校验 / 签名
+sha2 = "0.10"
+hex = "0.4"
+ed25519-dalek = { version = "3", features = ["rand_core"] }
+
+# libp2p 节点身份认证（PeerId / Ed25519 节点密钥）
+libp2p-identity = { version = "0.3", features = ["ed25519", "rand", "peerid"] }
+
+# 网络（下载插件 / IPFS HTTP 镜像回退）
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+futures = "0.3"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# 文件 / 路径
+tempfile = "3"
+getrandom = { version = "0.4", features = ["sys_rng"] }
+semver = "1"
+wasmtime = { version = "47.0.3", default-features = false, features = ["anyhow", "cranelift", "runtime", "std", "wat"] }
+
+[dev-dependencies]
+http-body-util = "0.1"
+wiremock = "0.6"

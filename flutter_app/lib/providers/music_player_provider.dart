@@ -1,29 +1,70 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:just_audio/just_audio.dart';
+
 import '../models/music.dart';
+import '../models/playlist.dart';
+import '../services/media_scanner_service.dart';
+import '../services/persistence_service.dart';
+import '../services/rust_bridge.dart';
 
 enum PlayerState { stopped, playing, paused, buffering }
 
 class MusicPlayerProvider extends ChangeNotifier {
-  // 当前播放状态
   PlayerState _playerState = PlayerState.stopped;
-  
-  // 当前播放的音乐
   Music? _currentMusic;
-  
-  // 播放列表
   List<Music> _playlist = [];
-  
-  // 当前播放位置（秒）
   double _currentPosition = 0.0;
-  
-  // 音乐总时长（秒）
   double _duration = 0.0;
-  
-  // 当前播放索引
   int _currentIndex = 0;
-  
-  // 音量 (0.0 - 1.0)
   double _volume = 1.0;
+  bool _muted = false;
+  String? _playbackError;
+  int _crossfadeMilliseconds = 0;
+  bool _crossfadeEqualPower = true;
+
+  /// 已收藏曲目（用 id 集合表示，跨列表共享收藏状态）。
+  Set<String> _favoriteIds = {};
+
+  /// 播放列表集合：名称 -> 播放列表。
+  Map<String, Playlist> _playlists = {};
+
+  /// 当前搜索关键字（空表示不过滤）。
+  String _searchQuery = '';
+
+  /// 媒体库（全部曲目，含扫描导入的本地文件）。
+  List<Music> _library = [];
+
+  /// Rust 宿主桥（桌面/移动端经 FFI 真实播放）。
+  RustBridge? _bridge;
+
+  /// 桥事件订阅。
+  StreamSubscription<BridgeEvent>? _bridgeSub;
+
+  /// 当前是否正在经桥播放。
+  bool _bridgeActive = false;
+
+  /// 桥是否可用。
+  bool get _bridgeAvailable =>
+      _bridge != null && _bridge!.available && _bridge!.readyForPlayback;
+
+  /// 可经桥播放的本地曲目（有文件路径，顺序与后端队列一致）。
+  List<Music> get _playableTracks => _library
+      .where(
+        (m) =>
+            m.availability == TrackAvailability.available &&
+            m.filePath != null &&
+            m.filePath!.isNotEmpty,
+      )
+      .toList();
+
+  /// 真实音频播放器（懒加载；仅在播放带 filePath 的曲目时创建）。
+  AudioPlayer? _audio;
+
+  /// 音频流订阅。
+  final List<StreamSubscription<dynamic>> _audioSubs = [];
 
   // Getters
   PlayerState get playerState => _playerState;
@@ -33,113 +74,414 @@ class MusicPlayerProvider extends ChangeNotifier {
   double get duration => _duration;
   int get currentIndex => _currentIndex;
   double get volume => _volume;
-  
+  bool get muted => _muted;
+  String? get playbackError => _playbackError;
+  int get crossfadeMilliseconds => _crossfadeMilliseconds;
+  bool get crossfadeEqualPower => _crossfadeEqualPower;
+  bool get supportsNativeTransitions =>
+      _bridge != null && _bridge!.readyForPlayback;
+  Set<String> get favoriteIds => _favoriteIds;
+  Map<String, Playlist> get playlists => _playlists;
+  String get searchQuery => _searchQuery;
+  List<Music> get library => _library;
+
   bool get isPlaying => _playerState == PlayerState.playing;
   bool get isPaused => _playerState == PlayerState.paused;
   bool get isBuffering => _playerState == PlayerState.buffering;
 
-  // 初始化演示播放列表
-  MusicPlayerProvider() {
-    _initializeDemoPlaylist();
+  /// 媒体库中过滤掉搜索后的结果。
+  List<Music> get filteredLibrary {
+    final q = _searchQuery.trim().toLowerCase();
+    if (q.isEmpty) return _library;
+    return _library.where((m) {
+      return m.title.toLowerCase().contains(q) ||
+          m.artist.toLowerCase().contains(q) ||
+          m.album.toLowerCase().contains(q);
+    }).toList();
   }
 
-  void _initializeDemoPlaylist() {
-    _playlist = List.generate(3, (index) => Music.demo(index));
+  /// 收藏的曲目列表。
+  List<Music> get favorites =>
+      _library.where((m) => _favoriteIds.contains(m.id)).toList();
+
+  MusicPlayerProvider() {
+    _ready = _loadPersisted();
+    _bridge = RustBridge.instance;
+  }
+
+  /// 持久化初始化完成的 Future（仅触发一次，由构造函数启动）。
+  late final Future<void> _ready;
+
+  /// 等待持久化初始化完成。
+  Future<void> get ready => _ready;
+
+  Future<void> _loadPersisted() async {
+    _library = await PersistenceService.loadLibrary();
+    _favoriteIds = await PersistenceService.loadFavoriteIds();
+    _playlists = await PersistenceService.loadPlaylists();
+    final session = await PersistenceService.loadPlaybackSession();
+    _volume = ((session['volume'] as num?)?.toDouble() ?? 1.0)
+        .clamp(0.0, 1.0)
+        .toDouble();
+    _muted = session['muted'] as bool? ?? false;
+    _crossfadeMilliseconds =
+        ((session['crossfadeMilliseconds'] as num?)?.toInt() ?? 0)
+            .clamp(0, 30_000)
+            .toInt();
+    _crossfadeEqualPower = session['crossfadeEqualPower'] as bool? ?? true;
+    _currentPosition = ((session['position'] as num?)?.toDouble() ?? 0.0)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final queueIds = (session['queue'] as List<dynamic>? ?? const [])
+        .whereType<String>()
+        .toList();
+    _playlist = queueIds.map(_findTrack).whereType<Music>().toList();
+    final currentId = session['currentTrackId'] as String?;
+    _currentMusic = currentId == null ? null : _findTrack(currentId);
+    final restoredIndex = _currentMusic == null
+        ? -1
+        : _playlist.indexWhere((track) => track.id == _currentMusic!.id);
+    _currentIndex = restoredIndex < 0 ? 0 : restoredIndex;
+    // 会话恢复永不自动播放，避免启动时意外发声。
+    _playerState = PlayerState.stopped;
+    // 将收藏状态合并到曲目对象。
+    _library = _library
+        .map(
+          (m) => _favoriteIds.contains(m.id) ? m.copyWith(isFavorite: true) : m,
+        )
+        .toList();
     notifyListeners();
   }
 
-  // 播放/暂停
-  void togglePlayPause() {
-    if (_playerState == PlayerState.playing) {
-      pause();
+  /// 等待持久化初始化完成（测试辅助；等价于 [ready]）。
+  Future<void> loadForTest() => ready;
+
+  // ---------- 媒体库 ----------
+
+  /// 扫描本地文件并导入曲目，返回新增数量。
+  Future<int> importFiles() async {
+    final tracks = await MediaScannerService.pickAudioFiles();
+    final existingIds = _library.map((m) => m.id).toSet();
+    final added = tracks.where((t) => !existingIds.contains(t.id)).toList();
+    _library = [..._library, ...added];
+    notifyListeners();
+    await PersistenceService.saveLibrary(_library);
+    return added.length;
+  }
+
+  /// 合并外部（本地扫描、Manifest 或社区目录）曲目；按稳定 ID 去重。
+  Future<int> mergeLibraryTracks(Iterable<Music> tracks) async {
+    final existingIds = _library.map((track) => track.id).toSet();
+    final added = tracks.where((track) => existingIds.add(track.id)).toList();
+    _library = [..._library, ...added];
+    notifyListeners();
+    await PersistenceService.saveLibrary(_library);
+    return added.length;
+  }
+
+  /// 设置搜索关键字。
+  void setSearchQuery(String query) {
+    _searchQuery = query;
+    notifyListeners();
+  }
+
+  // ---------- 收藏 ----------
+
+  /// 是否为已收藏曲目。
+  bool isFavorite(Music music) => _favoriteIds.contains(music.id);
+
+  /// 切换收藏状态。
+  Future<void> toggleFavorite(Music music) async {
+    if (_favoriteIds.contains(music.id)) {
+      _favoriteIds.remove(music.id);
     } else {
-      play();
+      _favoriteIds.add(music.id);
+    }
+    _library = _library
+        .map(
+          (m) => m.id == music.id
+              ? m.copyWith(isFavorite: _favoriteIds.contains(m.id))
+              : m,
+        )
+        .toList();
+    notifyListeners();
+    await PersistenceService.saveFavoriteIds(_favoriteIds);
+    await PersistenceService.saveLibrary(_library);
+  }
+
+  // ---------- 播放列表 ----------
+
+  /// 创建播放列表。
+  Future<void> createPlaylist(String name) async {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty || _playlists.containsKey(trimmed)) return;
+    _playlists[trimmed] = Playlist(name: trimmed);
+    notifyListeners();
+    await _savePlaylists();
+  }
+
+  /// 删除播放列表。
+  Future<void> deletePlaylist(String name) async {
+    _playlists.remove(name);
+    notifyListeners();
+    await _savePlaylists();
+  }
+
+  /// 向播放列表添加曲目。
+  Future<void> addToNamedPlaylist(String playlistName, Music music) async {
+    final pl = _playlists[playlistName];
+    if (pl == null) return;
+    if (!pl.trackIds.contains(music.id)) {
+      pl.trackIds.add(music.id);
+      notifyListeners();
+      await _savePlaylists();
     }
   }
 
-  // 播放
-  void play([Music? music]) {
+  /// 从播放列表移除曲目。
+  Future<void> removeFromNamedPlaylist(
+    String playlistName,
+    String trackId,
+  ) async {
+    final pl = _playlists[playlistName];
+    if (pl == null) return;
+    pl.trackIds.remove(trackId);
+    notifyListeners();
+    await _savePlaylists();
+  }
+
+  /// 根据播放列表名解析曲目列表。
+  List<Music> tracksInPlaylist(String name) {
+    final pl = _playlists[name];
+    if (pl == null) return [];
+    return _library.where((m) => pl.trackIds.contains(m.id)).toList();
+  }
+
+  Future<void> _savePlaylists() => PersistenceService.savePlaylists(_playlists);
+
+  // ---------- 播放控制 ----------
+
+  Future<void> togglePlayPause() async {
+    if (_playerState == PlayerState.playing) {
+      await pause();
+    } else if (_playerState == PlayerState.paused) {
+      await resume();
+    } else {
+      // stopped（含首次尚未选择曲目）：开始播放。
+      await play();
+    }
+  }
+
+  Future<void> play([Music? music]) async {
     if (music != null) {
       _currentMusic = music;
-      _currentIndex = _playlist.indexOf(music);
+      if (_playlist.every((track) => track.id != music.id)) {
+        _playlist = List<Music>.from(_library);
+      }
+      _currentIndex = _playlist.indexWhere((track) => track.id == music.id);
     }
-    
+
     if (_currentMusic == null && _playlist.isNotEmpty) {
       _currentMusic = _playlist[0];
       _currentIndex = 0;
     }
-    
-    _playerState = PlayerState.playing;
-    
-    // 模拟播放进度更新
-    _simulatePlayback();
-    
+
+    final target = _currentMusic;
+    if (target == null) return;
+
+    if (target.availability != TrackAvailability.available) {
+      _failPlayback(
+        target.unavailableReason ?? '当前音源不可用：${target.availability.name}',
+      );
+      return;
+    }
+
+    _playbackError = null;
+    _playerState = PlayerState.buffering;
     notifyListeners();
+
+    // 桥优先：桌面/移动端有本地文件路径时，经 Rust 桥播放（Core 队列 + 自动切歌）。
+    if (target.filePath != null &&
+        target.filePath!.isNotEmpty &&
+        _bridgeAvailable) {
+      if (_playViaBridge(target)) {
+        await _saveSession();
+        return;
+      }
+    }
+
+    // Web 端：内存字节 → data URI 真实播放。
+    if (target.audioBytes != null && target.audioBytes!.isNotEmpty) {
+      if (await _playBytes(target.audioBytes!, target.mimeType)) {
+        _playerState = PlayerState.playing;
+        notifyListeners();
+        await _saveSession();
+        return;
+      }
+    }
+
+    // 有本地文件路径：使用 just_audio 真实播放。
+    if (target.filePath != null && target.filePath!.isNotEmpty) {
+      if (await _playReal(target.filePath!)) {
+        _playerState = PlayerState.playing;
+        notifyListeners();
+        await _saveSession();
+        return;
+      }
+    }
+
+    _failPlayback(_playbackError ?? '没有可用的真实音源或音频输出，未开始播放');
   }
 
-  // 暂停
-  void pause() {
-    _playerState = PlayerState.paused;
-    notifyListeners();
+  Future<void> pause() async {
+    if (_playerState == PlayerState.paused) return;
+    if (_bridgeActive) {
+      final code = _bridge?.pause();
+      if (code != 0) _failPlayback(_bridge?.lastError() ?? '暂停失败（错误码 $code）');
+      return;
+    }
+    if (_audio == null) return;
+    try {
+      await _audio?.pause();
+      _playerState = PlayerState.paused;
+      notifyListeners();
+      await _saveSession();
+    } catch (error) {
+      _failPlayback('暂停失败：$error');
+    }
   }
 
-  // 停止
-  void stop() {
+  /// 从暂停处继续播放：若已有已加载的音频源，仅调用 `play()` 恢复，
+  /// **不重新加载源**（重新 `setAudioSource`/`setFilePath` 会把进度重置到 0）。
+  Future<void> resume() async {
+    if (_playerState == PlayerState.playing) return;
+
+    if (_bridgeActive) {
+      final code = _bridge?.resume();
+      if (code != 0) _failPlayback(_bridge?.lastError() ?? '继续播放失败（错误码 $code）');
+      return;
+    }
+
+    final audio = _audio;
+    if (audio != null) {
+      try {
+        unawaited(audio.play());
+        _playerState = PlayerState.playing;
+        notifyListeners();
+      } catch (error) {
+        _failPlayback('继续播放失败：$error');
+      }
+    } else {
+      await play();
+    }
+  }
+
+  Future<void> stop() async {
+    if (_bridgeActive) {
+      _bridge?.stop();
+      _bridgeActive = false;
+    } else {
+      try {
+        await _audio?.stop();
+      } catch (_) {}
+    }
     _playerState = PlayerState.stopped;
     _currentPosition = 0.0;
     notifyListeners();
+    await _saveSession();
   }
 
-  // 下一首
-  void next() {
+  Future<void> next() async {
+    // 桥模式：委托后端 Player 切歌并自动播放。
+    if (_bridgeActive) {
+      _bridge?.next();
+      return;
+    }
     if (_playlist.isEmpty) return;
-    
     _currentIndex = (_currentIndex + 1) % _playlist.length;
-    
     _currentMusic = _playlist[_currentIndex];
     _currentPosition = 0.0;
-    
+
     if (_playerState == PlayerState.playing) {
-      play();
+      await play();
     } else {
       notifyListeners();
     }
   }
 
-  // 上一首
-  void previous() {
+  Future<void> previous() async {
+    // 桥模式：委托后端 Player 切歌并自动播放。
+    if (_bridgeActive) {
+      _bridge?.previous();
+      return;
+    }
     if (_playlist.isEmpty) return;
-    
     _currentIndex = (_currentIndex - 1 + _playlist.length) % _playlist.length;
     _currentMusic = _playlist[_currentIndex];
     _currentPosition = 0.0;
-    
+
     if (_playerState == PlayerState.playing) {
-      play();
+      await play();
     } else {
       notifyListeners();
     }
   }
 
-  // 跳转到指定位置
-  void seekTo(double position) {
-    _currentPosition = position.clamp(0.0, _duration);
+  Future<void> seekTo(double position) async {
+    _currentPosition = position.clamp(0.0, _duration).toDouble();
+    if (_bridgeActive) {
+      _bridge?.seek(position);
+      notifyListeners();
+      return;
+    }
+    try {
+      await _audio?.seek(Duration(seconds: position.toInt()));
+    } catch (_) {}
     notifyListeners();
+    await _saveSession();
   }
 
-  // 设置音量
-  void setVolume(double volume) {
-    _volume = volume.clamp(0.0, 1.0);
+  Future<void> setVolume(double volume) async {
+    _volume = volume.clamp(0.0, 1.0).toDouble();
+    try {
+      await _audio?.setVolume(_muted ? 0.0 : _volume);
+    } catch (_) {}
     notifyListeners();
+    await _saveSession();
   }
 
-  // 添加到播放列表
+  Future<void> setMuted(bool muted) async {
+    _muted = muted;
+    try {
+      await _audio?.setVolume(_muted ? 0.0 : _volume);
+    } catch (_) {}
+    notifyListeners();
+    await _saveSession();
+  }
+
+  /// Zero selects sample-contiguous gapless playback. Positive values are
+  /// applied by the Rust double-timeline mixer when native output is active.
+  Future<void> setCrossfade(Duration duration, {bool? equalPower}) async {
+    _crossfadeMilliseconds = duration.inMilliseconds.clamp(0, 30_000).toInt();
+    if (equalPower != null) _crossfadeEqualPower = equalPower;
+    if (_bridgeAvailable) {
+      final code = _bridge!.setCrossfade(
+        Duration(milliseconds: _crossfadeMilliseconds),
+        equalPower: _crossfadeEqualPower,
+      );
+      if (code != 0) {
+        _playbackError = _bridge!.lastError() ?? '无法更新切歌过渡（错误码 $code）';
+      }
+    }
+    notifyListeners();
+    await _saveSession();
+  }
+
   void addToPlaylist(Music music) {
     _playlist.add(music);
     notifyListeners();
   }
 
-  // 从播放列表移除
   void removeFromPlaylist(int index) {
     if (index >= 0 && index < _playlist.length) {
       _playlist.removeAt(index);
@@ -151,15 +493,182 @@ class MusicPlayerProvider extends ChangeNotifier {
     }
   }
 
-  // 模拟播放进度（实际应用中会使用真正的音频播放器）
-  void _simulatePlayback() {
-    if (_currentMusic == null) return;
-    
-    // 解析时长字符串为秒数
-    final parts = _currentMusic!.duration.split(':');
-    _duration = double.parse(parts[0]) * 60 + double.parse(parts[1]);
-    
-    // 这里只是演示，实际应用中需要与音频播放器集成
-    // 可以使用 just_audio 等插件来实现真正的音频播放
+  // ---------- 内部 ----------
+
+  /// 经 Rust 桥播放：把本地曲目队列交给后端 Player，由后端负责自动切歌。成功返回 true。
+  bool _playViaBridge(Music target) {
+    try {
+      final tracks = _playableTracks;
+      final index = tracks.indexWhere((m) => m.id == target.id);
+      if (index < 0) return false;
+
+      final paths = tracks.map((m) => m.filePath!).toList();
+      final transitionCode = _bridge!.setCrossfade(
+        Duration(milliseconds: _crossfadeMilliseconds),
+        equalPower: _crossfadeEqualPower,
+      );
+      if (transitionCode != 0) {
+        _playbackError =
+            _bridge!.lastError() ?? '设置切歌过渡失败（错误码 $transitionCode）';
+        return false;
+      }
+      final qCode = _bridge!.setQueue(paths);
+      if (qCode != 0) {
+        _playbackError = _bridge!.lastError() ?? '设置播放队列失败（错误码 $qCode）';
+        return false;
+      }
+      final pCode = _bridge!.playTrack(index);
+      if (pCode != 0) {
+        _playbackError = _bridge!.lastError() ?? '播放请求失败（错误码 $pCode）';
+        return false;
+      }
+
+      _bridgeActive = true;
+      // 桥在 set_queue 内同步读取各曲目元数据时长，此处可获取当前曲目时长。
+      _duration = _bridge!.duration();
+      _bridgeSub ??= _bridge!.events.listen(_onBridgeEvent);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 处理来自 Rust 桥的播放事件（状态/进度/自动切歌）。
+  void _onBridgeEvent(BridgeEvent event) {
+    if (!_bridgeActive) return;
+    if (event.eventType == PlaybackEventType.playing) {
+      _playerState = PlayerState.playing;
+      // 后端自动切歌后，同步当前曲目。
+      final tracks = _playableTracks;
+      final idx = _bridge?.currentIndex() ?? 0;
+      if (tracks.isNotEmpty && idx >= 0 && idx < tracks.length) {
+        final now = tracks[idx];
+        if (now.id != _currentMusic?.id) {
+          _currentMusic = now;
+          _currentPosition = 0.0;
+          final inPlaylist = _playlist.indexOf(now);
+          _currentIndex = inPlaylist >= 0 ? inPlaylist : idx;
+        }
+      }
+    } else if (event.eventType == PlaybackEventType.paused) {
+      _playerState = PlayerState.paused;
+    } else if (event.eventType == PlaybackEventType.stopped) {
+      _playerState = PlayerState.stopped;
+      _currentPosition = 0.0;
+    } else if (event.eventType == PlaybackEventType.progress) {
+      _currentPosition = _bridge?.position() ?? _currentPosition;
+    } else if (event.eventType == PlaybackEventType.error) {
+      _bridgeActive = false;
+      _failPlayback(_bridge?.lastError() ?? 'Rust Core 报告播放失败');
+      return;
+    }
+    notifyListeners();
+    unawaited(_saveSession());
+  }
+
+  /// 尝试用 just_audio 播放本地文件。失败时返回 false，调用方会显示真实错误。
+  Future<bool> _playReal(String path) async {
+    try {
+      final audio = await _ensureAudio();
+      await audio.setFilePath(path);
+      unawaited(audio.play());
+      return true;
+    } catch (error) {
+      _playbackError = '无法播放本地文件：$error';
+      return false;
+    }
+  }
+
+  /// 尝试用 just_audio 播放内存字节（Web 端）。经 data URI 供浏览器 `<audio>` 元素加载。
+  Future<bool> _playBytes(Uint8List bytes, String? mimeType) async {
+    try {
+      final audio = await _ensureAudio();
+      final uri = Uri.dataFromBytes(bytes, mimeType: mimeType ?? 'audio/mpeg');
+      await audio.setAudioSource(AudioSource.uri(uri));
+      unawaited(audio.play());
+      return true;
+    } catch (error) {
+      _playbackError = '浏览器无法解码该音频：$error';
+      return false;
+    }
+  }
+
+  /// 懒创建 AudioPlayer 并订阅 position/duration/completed 流。
+  Future<AudioPlayer> _ensureAudio() async {
+    final existing = _audio;
+    if (existing != null) return existing;
+
+    final audio = AudioPlayer();
+    _audio = audio;
+
+    _audioSubs.add(
+      audio.positionStream.listen((pos) {
+        _currentPosition = pos.inSeconds.toDouble();
+        notifyListeners();
+      }),
+    );
+    _audioSubs.add(
+      audio.durationStream.listen((dur) {
+        if (dur != null) _duration = dur.inSeconds.toDouble();
+      }),
+    );
+    _audioSubs.add(
+      audio.playerStateStream.listen((state) {
+        if (state.processingState == ProcessingState.completed) {
+          // 播放完毕自动切下一首。
+          next();
+        }
+      }),
+    );
+    _audioSubs.add(
+      audio.playbackEventStream.listen(
+        (_) {},
+        onError: (Object error, StackTrace stackTrace) {
+          _failPlayback('音频输出错误：$error');
+        },
+      ),
+    );
+    await audio.setVolume(_muted ? 0.0 : _volume);
+    return audio;
+  }
+
+  void clearPlaybackError() {
+    _playbackError = null;
+    notifyListeners();
+  }
+
+  void _failPlayback(String message) {
+    _playerState = PlayerState.stopped;
+    _playbackError = message;
+    notifyListeners();
+    unawaited(_saveSession());
+  }
+
+  Future<void> _saveSession() => PersistenceService.savePlaybackSession({
+    'queue': _playlist.map((track) => track.id).toList(),
+    'currentTrackId': _currentMusic?.id,
+    'position': _currentPosition,
+    'volume': _volume,
+    'muted': _muted,
+    'crossfadeMilliseconds': _crossfadeMilliseconds,
+    'crossfadeEqualPower': _crossfadeEqualPower,
+    'autoPlay': false,
+  });
+
+  Music? _findTrack(String id) {
+    for (final track in _library) {
+      if (track.id == id) return track;
+    }
+    return null;
+  }
+
+  @override
+  void dispose() {
+    _bridgeSub?.cancel();
+    for (final s in _audioSubs) {
+      s.cancel();
+    }
+    _audio?.dispose();
+    super.dispose();
   }
 }

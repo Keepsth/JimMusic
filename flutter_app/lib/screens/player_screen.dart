@@ -1,22 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/music_player_provider.dart';
 
+import '../models/lyrics.dart';
+import '../providers/music_player_provider.dart';
+import '../widgets/geek_cover.dart';
+import '../widgets/lyrics_view.dart';
+
+/// 播放页：专辑封面、播放控制、进度条、收藏。
 class PlayerScreen extends StatelessWidget {
   const PlayerScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
-      backgroundColor: const Color(0xFF121212),
       appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
         leading: IconButton(
           onPressed: () => Navigator.pop(context),
-          icon: const Icon(
+          icon: Icon(
             Icons.keyboard_arrow_down,
-            color: Colors.white,
+            color: scheme.onSurface,
             size: 28,
           ),
         ),
@@ -26,16 +29,16 @@ class PlayerScreen extends StatelessWidget {
               children: [
                 Text(
                   player.currentMusic?.album ?? '',
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: scheme.onSurface,
                     fontSize: 12,
                     fontWeight: FontWeight.w500,
                   ),
                 ),
-                const Text(
+                Text(
                   '正在播放',
                   style: TextStyle(
-                    color: Colors.grey,
+                    color: scheme.onSurfaceVariant,
                     fontSize: 10,
                   ),
                 ),
@@ -44,90 +47,93 @@ class PlayerScreen extends StatelessWidget {
           },
         ),
         centerTitle: true,
-        actions: [
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(
-              Icons.more_vert,
-              color: Colors.white,
-            ),
-          ),
-        ],
+        actions: const [SizedBox(width: 48)],
       ),
       body: Consumer<MusicPlayerProvider>(
         builder: (context, player, child) {
           final music = player.currentMusic;
           if (music == null) {
-            return const Center(
+            return Center(
               child: Text(
                 '没有正在播放的音乐',
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(color: scheme.onSurfaceVariant),
               ),
             );
           }
+
+          final favorite = player.isFavorite(music);
 
           return Padding(
             padding: const EdgeInsets.all(24.0),
             child: Column(
               children: [
                 const SizedBox(height: 20),
-                
-                // 专辑封面
-                Hero(
-                  tag: 'album_art_${music.id}',
-                  child: Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.3),
-                          blurRadius: 20,
-                          offset: const Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(16),
-                      child: Container(
-                        color: Colors.grey[800],
-                        child: const Icon(
-                          Icons.music_note,
-                          color: Colors.grey,
-                          size: 60,
-                        ),
+
+                // 专辑封面（极客风，零网络/零解码）
+                GeekCover(
+                  seed: music.id,
+                  label: music.title,
+                  size: 180,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+
+                const SizedBox(height: 32),
+
+                // 歌曲信息 + 收藏
+                Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        children: [
+                          Text(
+                            music.title,
+                            style: TextStyle(
+                              color: scheme.onSurface,
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            music.artist,
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
+                              fontSize: 16,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
                       ),
                     ),
+                    IconButton(
+                      onPressed: () => player.toggleFavorite(music),
+                      icon: Icon(
+                        favorite ? Icons.favorite : Icons.favorite_border,
+                        color: favorite
+                            ? scheme.primary
+                            : scheme.onSurfaceVariant,
+                        size: 28,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 24),
+
+                // 同步歌词
+                SizedBox(
+                  height: 120,
+                  child: LyricsView(
+                    lyrics: Lyrics.parseLrc(music.lyrics ?? ''),
+                    position: Duration(seconds: player.currentPosition.toInt()),
                   ),
                 ),
-                
-                const SizedBox(height: 32),
-                
-                // 歌曲信息
-                Text(
-                  music.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  music.artist,
-                  style: const TextStyle(
-                    color: Colors.grey,
-                    fontSize: 16,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                
-                const SizedBox(height: 32),
-                
+
+                const SizedBox(height: 24),
+
                 // 进度条
                 Column(
                   children: [
@@ -135,9 +141,11 @@ class PlayerScreen extends StatelessWidget {
                       value: player.currentPosition,
                       max: player.duration > 0 ? player.duration : 1,
                       onChanged: player.seekTo,
-                      activeColor: const Color(0xFF1DB954),
-                      inactiveColor: Colors.grey[600],
-                      thumbColor: const Color(0xFF1DB954),
+                      activeColor: scheme.primary,
+                      inactiveColor: scheme.onSurfaceVariant.withValues(
+                        alpha: 0.3,
+                      ),
+                      thumbColor: scheme.primary,
                     ),
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -146,15 +154,15 @@ class PlayerScreen extends StatelessWidget {
                         children: [
                           Text(
                             _formatDuration(player.currentPosition),
-                            style: const TextStyle(
-                              color: Colors.grey,
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
                               fontSize: 12,
                             ),
                           ),
                           Text(
                             music.duration,
-                            style: const TextStyle(
-                              color: Colors.grey,
+                            style: TextStyle(
+                              color: scheme.onSurfaceVariant,
                               fontSize: 12,
                             ),
                           ),
@@ -163,48 +171,73 @@ class PlayerScreen extends StatelessWidget {
                     ),
                   ],
                 ),
-                
-                const SizedBox(height: 32),
-                
+
+                const SizedBox(height: 24),
+
                 // 播放控制按钮
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     IconButton(
                       onPressed: player.previous,
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.skip_previous,
-                        color: Colors.white,
+                        color: scheme.onSurface,
                         size: 36,
                       ),
                     ),
                     Container(
                       width: 64,
                       height: 64,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF1DB954),
+                      decoration: BoxDecoration(
+                        color: scheme.primary,
                         shape: BoxShape.circle,
                       ),
                       child: IconButton(
-                        onPressed: player.togglePlayPause,
-                        icon: Icon(
-                          player.isPlaying ? Icons.pause : Icons.play_arrow,
-                          color: Colors.black,
-                          size: 32,
-                        ),
+                        onPressed: player.isBuffering
+                            ? null
+                            : player.togglePlayPause,
+                        icon: player.isBuffering
+                            ? CircularProgressIndicator(color: scheme.onPrimary)
+                            : Icon(
+                                player.isPlaying
+                                    ? Icons.pause
+                                    : Icons.play_arrow,
+                                color: scheme.onPrimary,
+                                size: 32,
+                              ),
                       ),
                     ),
                     IconButton(
                       onPressed: player.next,
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.skip_next,
-                        color: Colors.white,
+                        color: scheme.onSurface,
                         size: 36,
                       ),
                     ),
                   ],
                 ),
-                
+
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    IconButton(
+                      tooltip: player.muted ? '取消静音' : '静音',
+                      onPressed: () => player.setMuted(!player.muted),
+                      icon: Icon(
+                        player.muted ? Icons.volume_off : Icons.volume_up,
+                      ),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: player.volume,
+                        onChanged: player.setVolume,
+                      ),
+                    ),
+                  ],
+                ),
+
                 const Spacer(),
               ],
             ),

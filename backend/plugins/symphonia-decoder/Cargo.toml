@@ -1,6 +1,27 @@
 [package]
 name = "symphonia-decoder"
-version = "0.1.0"
+version = "2.0.0"
 edition = "2021"
+description = "JimMusic Symphonia 解码器插件（纯 Rust，静态链接，可选）"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+# 默认导出 C ABI 符号（jimmusic_*）；作为 rlib 被其它解码器插件复用时关闭此 feature，
+# 避免重复导出同名符号导致链接冲突。
+default = ["abi"]
+abi = ["dep:plugin-abi"]
 
 [dependencies]
+# plugin-abi 仅用于 C ABI 导出；纯解码能力不依赖它。
+plugin-abi = { path = "../../plugin-abi", optional = true }
+
+# 真实音频解码与元数据读取（纯 Rust 实现，静态链接）
+symphonia = { version = "0.6", features = ["mp3", "aac", "isomp4", "wav", "flac", "ogg", "vorbis", "pcm"] }
+
+# 错误处理 / 日志
+thiserror = "2"
+tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
