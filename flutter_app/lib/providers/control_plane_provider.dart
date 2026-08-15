@@ -76,6 +76,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (detail == null) return '';
     return apiErrorText(detail).full;
   }
+
   Map<String, dynamic>? get health => _health;
   Map<String, dynamic>? get node => _node;
   Map<String, dynamic>? get deviceNode => _deviceNode;
@@ -120,6 +121,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       api.close();
     }
   }
+
   List<Map<String, dynamic>> get pins => _pins;
   Object? get lastResult => _lastResult;
   bool get connected => _health?['status'] == 'ok';
@@ -470,9 +472,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<Map<String, dynamic>?> pluginConfig(String id) async {
     final api = _makeApi();
     try {
-      return _map(
-        await api.get('/plugins/${Uri.encodeComponent(id)}/config'),
-      );
+      return _map(await api.get('/plugins/${Uri.encodeComponent(id)}/config'));
     } catch (error) {
       _error = error.toString();
       notifyListeners();
@@ -502,10 +502,10 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> setMusicDirectory(String directory) async {
     final requestId = 'music-dir-${DateTime.now().microsecondsSinceEpoch}';
     await _mutate(
-      (api) => api.put(
-        '/library/music-directory',
-        {'request_id': requestId, 'directory': directory.trim()},
-      ),
+      (api) => api.put('/library/music-directory', {
+        'request_id': requestId,
+        'directory': directory.trim(),
+      }),
     );
   }
 
@@ -513,9 +513,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<Map<String, dynamic>?> pluginConfigSchema(String id) async {
     final api = _makeApi();
     try {
-      return _map(
-        await api.get('/plugins/${Uri.encodeComponent(id)}/schema'),
-      );
+      return _map(await api.get('/plugins/${Uri.encodeComponent(id)}/schema'));
     } catch (_) {
       return null;
     } finally {
@@ -530,6 +528,40 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
           configuration,
         ),
       );
+
+  /// PLG-005：浏览/搜索社区目录收录的插件清单（PluginManifest 条目）。
+  Future<Map<String, dynamic>?> pluginCatalog({String q = ''}) async {
+    final api = _makeApi();
+    try {
+      return _map(
+        await api.get('/plugins/catalog?q=${Uri.encodeQueryComponent(q)}'),
+      );
+    } catch (error) {
+      _error = error.toString();
+      _errorDetail = error;
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
+
+  /// PLG-005：目录条目详情（完整 Manifest + 兼容性/更新/撤销摘要）。
+  Future<Map<String, dynamic>?> pluginCatalogDetail(String cid) async {
+    final api = _makeApi();
+    try {
+      return _map(
+        await api.get('/plugins/catalog/${Uri.encodeComponent(cid)}'),
+      );
+    } catch (error) {
+      _error = error.toString();
+      _errorDetail = error;
+      notifyListeners();
+      return null;
+    } finally {
+      api.close();
+    }
+  }
 
   Future<void> followPublisher(
     String identityCid,
@@ -569,10 +601,10 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> overridePolicy(String target, String reason) async {
     final requestId = 'override-${DateTime.now().microsecondsSinceEpoch}';
     await _mutate(
-      (api) => api.post(
-        '/policy/${Uri.encodeComponent(target)}/override',
-        {'request_id': requestId, 'reason': reason.trim()},
-      ),
+      (api) => api.post('/policy/${Uri.encodeComponent(target)}/override', {
+        'request_id': requestId,
+        'reason': reason.trim(),
+      }),
     );
   }
 
@@ -582,8 +614,9 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   );
 
   Future<void> unfollowPublisher(String identityCid) => _mutate(
-    (api) =>
-        api.delete('/community-sources/follows/${Uri.encodeComponent(identityCid)}'),
+    (api) => api.delete(
+      '/community-sources/follows/${Uri.encodeComponent(identityCid)}',
+    ),
   );
 
   Future<void> setCommunitySwitches(
@@ -704,11 +737,13 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     final api = _makeApi();
-    _eventSub = api.events(after: _lastSequence).listen(
-      _onSseEvent,
-      onError: (Object error) => _onSseDisconnect(),
-      onDone: _onSseDisconnect,
-    );
+    _eventSub = api
+        .events(after: _lastSequence)
+        .listen(
+          _onSseEvent,
+          onError: (Object error) => _onSseDisconnect(),
+          onDone: _onSseDisconnect,
+        );
   }
 
   void _stopEventStream() {
@@ -786,7 +821,8 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _adoptPayloadSequence(Map<String, dynamic>? payload) {
     final sequence = payload?['sequence'];
-    if (sequence is int && (_lastSequence == null || sequence > _lastSequence!)) {
+    if (sequence is int &&
+        (_lastSequence == null || sequence > _lastSequence!)) {
       _lastSequence = sequence;
     }
   }

@@ -60,7 +60,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-002 | 本机通过 | Manifest Validate 覆盖 ID、版本、发布者、ABI、权限、依赖、Schema、许可证、CID | 未知字段严格策略仍需跨版本契约测试 |
 | PLG-003 | 本机通过 | 安装前同时校验 Manifest 签名、CID、SHA-256、长度与信任通道；负向测试 | 社区撤销 Feed 尚未接入 |
 | PLG-004 | 本机通过 | staging、fsync、原子版本目录/状态提交、旧版本保留、启动清孤儿 | 断电故障注入仅有逻辑/文件级测试 |
-| PLG-005 | 部分实现 | v1 API/UI 支持安装、启停、配置、回滚、卸载，状态持久化 | 浏览/搜索与“升级可用”远端目录不完整 |
+| PLG-005 | 本机通过 | v1 API/UI 支持安装、启停、配置、回滚、卸载，状态持久化；社区插件目录：`GET /v1/plugins/catalog`（`q` 搜索 CID/分类/标签/注解）与 `/catalog/{cid}` 详情（Manifest JSON/DAG-CBOR 双编码解析，返回 artifact_available/installed_state/active_version/update_available/revoked）；目录页浏览/搜索/详情/安装（公钥与权限确认）；API 测试 1 项 | 七端交互待验收 |
 | PLG-006 | 本机通过 | 权限声明/授权/撤销持久化；Wasmtime Host 使用 owner-scoped 不透明句柄并即时撤销；越权测试 | 七端 UI 与运行时集成证据待 RC |
 | PLG-007 | 部分实现 | 官方原生、社区沙箱、社区原生高级通道与审计 | 桌面二次确认/持续警告 E2E 不完整 |
 | PLG-008 | 本机通过 | service owner 注册冲突与微内核保留服务拒绝测试 | 尚无跨进程 service host |

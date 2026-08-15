@@ -30,6 +30,10 @@
    Ed25519 公钥并通过 Manifest 签名校验，定位符本身不是信任根。
 8. 创建传输可提供 `priority`（-100..100，默认 0），排队值越高越先占用并发槽；仅 queued/paused
    任务可通过 `PATCH /v1/transfers/{id}/priority` 调整，已经运行的任务不会被静默抢占。
+9. 插件目录浏览走 `GET /v1/plugins/catalog`（`q` 搜索 CID/分类/标签/注解）与
+   `GET /v1/plugins/catalog/{cid}`（详情含 artifact_available/installed_state/active_version/
+   update_available/revoked 摘要）；从目录安装与本地安装共用 `POST /v1/plugins/install`
+   入口，需提供发布者 Ed25519 公钥与权限确认，制品位置可为 `ipfs://CID`。
 
 ## 持久状态
 

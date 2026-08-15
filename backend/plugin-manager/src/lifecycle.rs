@@ -440,6 +440,14 @@ impl PluginLifecycleService {
         Ok(())
     }
 
+    /// PLG-005：发布是否已被撤销（目录详情/升级判定用）。
+    pub fn is_release_revoked(&self, manifest_cid: &str) -> bool {
+        self.store
+            .snapshot()
+            .revoked_releases
+            .contains(manifest_cid)
+    }
+
     /// PLG-013：当前安装日志（下载/验证/暂存/提交/失败/中断）。
     pub fn install_journal(&self) -> Vec<InstallJournalEntryV1> {
         self.store

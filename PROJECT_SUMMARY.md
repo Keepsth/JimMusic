@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 249 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 250 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，71 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -125,6 +125,10 @@
 - 发布向导（UI-004）：元数据（标题/艺术家/专辑/许可证/内容标签）+ rendition 表单
   校验并生成 Manifest，签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方
   服务数量）；
+- 插件目录浏览（PLG-005）：`GET /v1/plugins/catalog` 列出社区目录收录的 PluginManifest
+  条目并支持 `q` 搜索（CID/分类/标签/注解），`/catalog/{cid}` 详情解析 Manifest
+  （JSON/DAG-CBOR 双编码）并给出制品可用性/已装状态/升级可用/撤销摘要；插件页
+  目录浏览/搜索/详情/安装（发布者公钥与权限确认，`ipfs://CID` 直取制品）；
 - 操作取消（UI-010）：控制台“取消当前操作”关闭进行中操作的专属客户端，操作以
   “操作已取消”结束并可重新发起；
 - 错误本地化（API-004）：Flutter 统一把稳定错误信封映射为本地化文案、重试建议与网络

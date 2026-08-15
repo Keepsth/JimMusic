@@ -102,6 +102,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/search", get(search))
         .route("/plugins", get(list_plugins))
+        .route("/plugins/catalog", get(plugin_catalog))
+        .route("/plugins/catalog/{cid}", get(plugin_catalog_detail))
         .route("/plugins/install-journal", get(list_install_journal))
         .route("/plugins/install", post(install_plugin))
         .route("/plugins/{id}", get(get_plugin).delete(uninstall_plugin))
@@ -2335,6 +2337,66 @@ async fn search(
         "local": state.library.search(&query.q),
         "community": state.community.search_catalog(&query.q, now()),
     }))
+}
+
+/// PLG-005：社区目录中的插件清单（target_type=plugin_manifest）——
+/// 浏览器端“远端目录”的浏览/搜索入口。
+async fn plugin_catalog(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<SearchQuery>,
+) -> Json<serde_json::Value> {
+    let entries: Vec<_> = state
+        .community
+        .search_catalog(&query.q, now())
+        .into_iter()
+        .filter(|entry| entry.target_type == "plugin_manifest")
+        .collect();
+    Json(serde_json::json!({
+        "schema_version": 1,
+        "entries": entries,
+    }))
+}
+
+/// PLG-005：目录条目详情——解析 Manifest 并给出兼容性/更新/撤销摘要。
+async fn plugin_catalog_detail(
+    State(state): State<Arc<AppState>>,
+    Path(cid): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let bytes = fetch_dag_object(&state, &cid)
+        .await
+        .map_err(|_| ApiError::not_found("plugin", "catalog_detail", "manifest not retrievable"))?;
+    let manifest =
+        if let Ok(manifest) = jimmusic_protocol::decode_dag_cbor::<PluginManifestV1>(&bytes) {
+            manifest
+        } else {
+            serde_json::from_slice::<PluginManifestV1>(&bytes).map_err(|error| {
+                ApiError::bad_request("plugin", "parse_catalog_manifest", error.to_string())
+            })?
+        };
+    let platform = std::env::consts::OS.to_string();
+    let architecture = std::env::consts::ARCH.to_string();
+    let artifact_available = manifest
+        .compatible_artifact(&platform, &architecture)
+        .is_some();
+    let installed = state.lifecycle.get(&manifest.plugin_id);
+    let active_version = installed
+        .as_ref()
+        .and_then(|record| record.active_version.clone());
+    let update_available = active_version
+        .as_deref()
+        .is_some_and(|active| active != manifest.version.as_str());
+    let revoked = state.lifecycle.is_release_revoked(&cid);
+    Ok(Json(serde_json::json!({
+        "manifest": manifest,
+        "manifest_cid": cid,
+        "artifact_available": artifact_available,
+        "platform": platform,
+        "architecture": architecture,
+        "installed_state": installed.map(|record| record.lifecycle_state),
+        "active_version": active_version,
+        "update_available": update_available,
+        "revoked": revoked,
+    })))
 }
 
 async fn list_install_journal(
@@ -4929,6 +4991,170 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["properties"]["mode"]["enum"][0], "fast");
         assert_eq!(body["properties"]["gain"]["maximum"], 12);
+    }
+
+    #[tokio::test]
+    async fn plugin_catalog_lists_and_details_community_plugin_manifests() {
+        use app_core::node_service::RAW_CODEC;
+        use jimmusic_protocol::{
+            canonical_dag_cbor, cid_v1_for_bytes, CatalogAction, PluginArtifactV1, PluginRuntime,
+        };
+        use std::collections::BTreeSet;
+
+        let (state, _dir) = state();
+        // 发布者签名插件 Manifest 存入本地 CAS。
+        let artifact = b"catalog-artifact".to_vec();
+        let publisher = SigningKey::from_bytes(&[34; 32]);
+        let mut manifest = PluginManifestV1 {
+            schema_version: SCHEMA_V1,
+            plugin_id: "org.example.catalog".into(),
+            name: "CatalogPlugin".into(),
+            version: "1.0.0".into(),
+            publisher: "org.example".into(),
+            plugin_kind: "audio_processor".into(),
+            interface_versions: BTreeMap::from([("audio_processor".into(), "2".into())]),
+            minimum_core_version: "2.0.0".into(),
+            maximum_core_version: "2.9.9".into(),
+            artifacts: vec![PluginArtifactV1 {
+                artifact_cid: cid_v1_for_bytes(RAW_CODEC, &artifact),
+                platform: std::env::consts::OS.into(),
+                architecture: std::env::consts::ARCH.into(),
+                runtime: PluginRuntime::Native,
+                entrypoint: "libcatalog.so".into(),
+                byte_length: artifact.len() as u64,
+                sha256: crate::state::sha256_hex(&artifact),
+                provenance_cid: None,
+                sbom_cid: Some("bafysbom".into()),
+                sandbox_profile: "official-native".into(),
+                required_host_capabilities: vec!["audio_realtime".into()],
+                hardware_requirements: Vec::new(),
+            }],
+            capabilities: vec!["audio_processor".into()],
+            permissions: BTreeSet::from([PluginPermission::AudioRealtime]),
+            dependencies: Vec::new(),
+            conflicts: Vec::new(),
+            configuration_schema_cid: "bafyschema".into(),
+            state_schema_version: 1,
+            license: "GPL-3.0-only".into(),
+            release_notes_cid: None,
+            previous_release_cid: None,
+            signature: None,
+            revoked_at: None,
+        };
+        manifest.signature = Some(hex::encode(
+            publisher
+                .sign(&manifest.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        let manifest_cid = state
+            .node
+            .add_dag_cbor(&canonical_dag_cbor(&manifest).unwrap(), false)
+            .unwrap();
+
+        // 社区源目录收录该插件清单。
+        let maintainer = SigningKey::from_bytes(&[33; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "plugcat.example".into(),
+            name: "PlugCat".into(),
+            description: "plugin catalog test".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+        let mut event = CatalogEventV1 {
+            schema_version: SCHEMA_V1,
+            action: CatalogAction::Include,
+            target_type: "plugin_manifest".into(),
+            target_cid: manifest_cid.clone(),
+            categories: vec!["audio".into()],
+            tags: vec!["dsp".into()],
+            annotation: Some("catalog entry".into()),
+            sequence: 0,
+            previous_event_cid: None,
+            expires_at: None,
+            issued_at: 2,
+            signature: None,
+        };
+        event.signature = Some(hex::encode(
+            maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        state
+            .community
+            .ingest_catalog("plugcat.example", event, &state.node)
+            .unwrap();
+
+        // 目录列表包含该条目。
+        let (status, catalog) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/plugins/catalog",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(catalog["schema_version"], 1);
+        assert_eq!(catalog["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(catalog["entries"][0]["target_cid"], manifest_cid);
+
+        // PLG-005：搜索——匹配标签命中，无匹配为空。
+        let (status, found) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/plugins/catalog?q=dsp",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(found["entries"].as_array().unwrap().len(), 1);
+        let (status, empty) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/plugins/catalog?q=no-such-entry",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(empty["entries"].as_array().unwrap().len(), 0);
+
+        // 详情：Manifest + 兼容性/更新/撤销摘要。
+        let (status, detail) = call(
+            routes(),
+            state,
+            "GET",
+            &format!("/plugins/catalog/{manifest_cid}"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{detail}");
+        assert_eq!(detail["manifest"]["name"], "CatalogPlugin");
+        assert_eq!(detail["artifact_available"], true);
+        assert_eq!(detail["update_available"], false);
+        assert_eq!(detail["revoked"], false);
+        assert_eq!(detail["manifest_cid"], manifest_cid);
     }
 
     #[tokio::test]

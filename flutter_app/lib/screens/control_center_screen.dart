@@ -432,10 +432,9 @@ class _NodeTab extends StatelessWidget {
     var assistPin = config['assist_pin_favorites'] == true;
     var autoReplicate = config['auto_replicate_published'] == true;
     final pinServices = TextEditingController(
-      text:
-          (config['pin_services'] as List<dynamic>? ?? const [])
-              .whereType<String>()
-              .join(', '),
+      text: (config['pin_services'] as List<dynamic>? ?? const [])
+          .whereType<String>()
+          .join(', '),
     );
     String? validationError;
     final accepted = await showDialog<bool>(
@@ -515,9 +514,8 @@ class _NodeTab extends StatelessWidget {
                       DropdownMenuItem(value: 'ethernet', child: Text('有线网络')),
                       DropdownMenuItem(value: 'unknown', child: Text('未声明')),
                     ],
-                    onChanged: (value) => setState(
-                      () => networkClass = value ?? 'unknown',
-                    ),
+                    onChanged: (value) =>
+                        setState(() => networkClass = value ?? 'unknown'),
                   ),
                   if (validationError != null)
                     Text(
@@ -661,10 +659,7 @@ class _LibraryTabState extends State<_LibraryTab> {
     final player = context.watch<MusicPlayerProvider>();
     final report = control.librarySyncReport;
     final localFiles = player.library
-        .where(
-          (music) =>
-              music.filePath != null && music.filePath!.isNotEmpty,
-        )
+        .where((music) => music.filePath != null && music.filePath!.isNotEmpty)
         .length;
     final network = player.library.length - localFiles;
     return Scaffold(
@@ -1172,15 +1167,10 @@ class _PublishTab extends StatelessWidget {
   /// 本机签名发布后展示回执与副本健康度（副本向导）。
   Future<void> _publishWizard(BuildContext context) async {
     if (!context.mounted) return;
-    final result = await showDialog<(
-      Map<String, dynamic>,
-      String,
-      String,
-      Map<String, dynamic>,
-    )>(
-      context: context,
-      builder: (_) => const PublishWizardDialog(),
-    );
+    final result =
+        await showDialog<
+          (Map<String, dynamic>, String, String, Map<String, dynamic>)
+        >(context: context, builder: (_) => const PublishWizardDialog());
     if (result == null) return;
     final (manifest, displayName, passphrase, bundle) = result;
     await control.signPublication(
@@ -1444,7 +1434,8 @@ class _CommunityTab extends StatelessWidget {
           ),
         ],
       ),
-      body: control.communitySources.isEmpty &&
+      body:
+          control.communitySources.isEmpty &&
               control.moderationReports.isEmpty &&
               control.follows.isEmpty &&
               control.refreshQueue.isEmpty
@@ -1480,17 +1471,14 @@ class _CommunityTab extends StatelessWidget {
                     ),
                     child: ListTile(
                       leading: const Icon(Icons.person),
-                      title: Text(
-                        '${follow['display_name'] ?? identityCid}',
-                      ),
+                      title: Text('${follow['display_name'] ?? identityCid}'),
                       subtitle: Text(
                         '${follow['publisher_id'] ?? '-'}\n'
                         'Identity CID: $identityCid',
                       ),
                       trailing: IconButton(
                         tooltip: '取消关注',
-                        onPressed: () =>
-                            control.unfollowPublisher(identityCid),
+                        onPressed: () => control.unfollowPublisher(identityCid),
                         icon: const Icon(Icons.person_remove),
                       ),
                     ),
@@ -1520,9 +1508,8 @@ class _CommunityTab extends StatelessWidget {
                     ),
                   );
                 }
-                final shifted = index -
-                    followsBase -
-                    control.refreshQueue.length;
+                final shifted =
+                    index - followsBase - control.refreshQueue.length;
                 if (shifted == control.communitySources.length &&
                     control.moderationReports.isNotEmpty) {
                   return const Padding(
@@ -1730,9 +1717,7 @@ class _CommunityTab extends StatelessWidget {
             ),
             FilledButton(
               onPressed: () async {
-                final result = await control.policyDecision(
-                  target.text.trim(),
-                );
+                final result = await control.policyDecision(target.text.trim());
                 setState(() {
                   decision = result;
                   decisionError = result == null ? control.error : null;
@@ -1957,10 +1942,25 @@ class _PluginsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _install(context),
-        icon: const Icon(Icons.extension),
-        label: const Text('安装签名插件'),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // PLG-005：社区插件目录（远程目录浏览/安装入口）。
+          FloatingActionButton.extended(
+            heroTag: 'plugin-catalog-fab',
+            onPressed: () => _catalog(context),
+            icon: const Icon(Icons.storefront_outlined),
+            label: const Text('插件目录'),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'plugin-install-fab',
+            onPressed: () => _install(context),
+            icon: const Icon(Icons.extension),
+            label: const Text('安装签名插件'),
+          ),
+        ],
       ),
       body: control.plugins.isEmpty && control.installJournal.isEmpty
           ? const Center(child: Text('暂无已安装插件'))
@@ -2104,6 +2104,293 @@ class _PluginsTab extends StatelessWidget {
             .map((value) => value.trim())
             .where((value) => value.isNotEmpty)
             .toList(),
+      );
+    }
+  }
+
+  /// PLG-005：浏览社区目录收录的插件清单。
+  Future<void> _catalog(BuildContext context) async {
+    final catalog = await control.pluginCatalog();
+    if (!context.mounted) return;
+    var entries = (catalog?['entries'] as List<dynamic>? ?? const [])
+        .cast<Map<String, dynamic>>();
+    final search = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('插件目录'),
+          content: SizedBox(
+            width: 640,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: search,
+                        decoration: const InputDecoration(
+                          labelText: '搜索 CID / 分类 / 标签 / 注解',
+                        ),
+                        onSubmitted: (_) => _searchCatalog(
+                          dialogContext,
+                          search,
+                          setState,
+                          (value) => entries = value,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.search),
+                      tooltip: '搜索',
+                      onPressed: () => _searchCatalog(
+                        dialogContext,
+                        search,
+                        setState,
+                        (value) => entries = value,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: entries.isEmpty
+                      ? const SizedBox(
+                          height: 120,
+                          child: Center(child: Text('社区目录暂未收录插件清单')),
+                        )
+                      : ConstrainedBox(
+                          constraints: const BoxConstraints(maxHeight: 420),
+                          child: ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: entries.length,
+                            itemBuilder: (context, index) {
+                              final entry = entries[index];
+                              final cid = '${entry['target_cid']}';
+                              final categories =
+                                  (entry['categories'] as List<dynamic>? ??
+                                          const [])
+                                      .join(' · ');
+                              final tags =
+                                  (entry['tags'] as List<dynamic>? ?? const [])
+                                      .join(' ');
+                              return ListTile(
+                                leading: const Icon(Icons.storefront_outlined),
+                                title: Text(
+                                  '${entry['annotation'] ?? cid}',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                subtitle: Text(
+                                  '$cid${tags.isEmpty ? '' : '\n$tags'}',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                trailing: categories.isEmpty
+                                    ? null
+                                    : Text(categories),
+                                onTap: () {
+                                  Navigator.pop(dialogContext);
+                                  _catalogDetail(context, cid);
+                                },
+                              );
+                            },
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('关闭'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _searchCatalog(
+    BuildContext dialogContext,
+    TextEditingController search,
+    StateSetter setState,
+    void Function(List<Map<String, dynamic>>) apply,
+  ) async {
+    final result = await control.pluginCatalog(q: search.text);
+    if (!dialogContext.mounted) return;
+    setState(
+      () => apply(
+        (result?['entries'] as List<dynamic>? ?? const [])
+            .cast<Map<String, dynamic>>(),
+      ),
+    );
+  }
+
+  /// PLG-005：目录条目详情（Manifest 摘要 + 安装可行性），可从详情进入安装。
+  Future<void> _catalogDetail(BuildContext context, String cid) async {
+    final detail = await control.pluginCatalogDetail(cid);
+    if (!context.mounted) return;
+    if (detail == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('目录详情加载失败：${control.error ?? '未知错误'}')),
+      );
+      return;
+    }
+    final manifest = detail['manifest'] as Map<String, dynamic>? ?? const {};
+    final name = '${manifest['name'] ?? '未知插件'}';
+    final version = '${manifest['version'] ?? '-'}';
+    final artifactAvailable = detail['artifact_available'] == true;
+    final revoked = detail['revoked'] == true;
+    final updateAvailable = detail['update_available'] == true;
+    final activeVersion = detail['active_version'];
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(name),
+        content: SizedBox(
+          width: 600,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${manifest['plugin_id']} · v$version\n'
+                  '发布者：${manifest['publisher'] ?? '-'} · '
+                  '${manifest['plugin_kind'] ?? '-'} · '
+                  '${manifest['license'] ?? '-'}',
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'CID：$cid\n'
+                  '目标平台：${detail['platform']}/${detail['architecture']}',
+                ),
+                const SizedBox(height: 8),
+                if (activeVersion != null)
+                  Text(
+                    '已安装版本：$activeVersion'
+                    '（${detail['installed_state'] ?? '未知状态'}）',
+                  ),
+                if (updateAvailable) const Text('目录中存在可用的新版本。'),
+                if (!artifactAvailable)
+                  Text(
+                    '当前平台/架构无可用制品，无法安装。',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                if (revoked)
+                  Text(
+                    '该版本已被目录策略撤销，无法安装。',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                if ((manifest['capabilities'] as List<dynamic>? ?? const [])
+                    .isNotEmpty)
+                  Text(
+                    '能力：${(manifest['capabilities'] as List<dynamic>).join(', ')}',
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('关闭'),
+          ),
+          if (artifactAvailable && !revoked)
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _installFromCatalog(context, detail);
+              },
+              child: Text(updateAvailable ? '更新' : '安装'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// PLG-005：从目录条目安装——Manifest 已可信，只需发布者公钥与授权确认。
+  Future<void> _installFromCatalog(
+    BuildContext context,
+    Map<String, dynamic> detail,
+  ) async {
+    final manifest = detail['manifest'] as Map<String, dynamic>? ?? const {};
+    final cid = '${detail['manifest_cid']}';
+    final publicKey = TextEditingController();
+    final permissions = TextEditingController();
+    var allowNative = false;
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Text('从目录安装 ${manifest['name']}'),
+          content: SizedBox(
+            width: 600,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'manifest_cid：$cid',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: publicKey,
+                    decoration: const InputDecoration(
+                      labelText: '发布者 Ed25519 公钥（hex）',
+                    ),
+                  ),
+                  TextField(
+                    controller: permissions,
+                    decoration: const InputDecoration(
+                      labelText: '授予权限（逗号分隔，可留空）',
+                    ),
+                  ),
+                  CheckboxListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('允许社区原生制品（在受限目录中运行）'),
+                    value: allowNative,
+                    onChanged: (value) =>
+                        setState(() => allowNative = value ?? false),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('安装'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (accepted == true) {
+      await control.installPlugin(
+        manifest,
+        publicKey.text,
+        artifactLocation: 'ipfs://$cid',
+        grantedPermissions: permissions.text
+            .split(',')
+            .map((value) => value.trim())
+            .where((value) => value.isNotEmpty)
+            .toList(),
+        allowCommunityNative: allowNative,
       );
     }
   }
