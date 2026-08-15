@@ -33,6 +33,9 @@ sha2 = "0.10"
 hex = "0.4"
 ed25519-dalek = { version = "3", features = ["rand_core"] }
 
+# Feed 快照的 gzip 传输压缩（COM-012）
+flate2 = "1"
+
 # libp2p 节点身份认证（PeerId / Ed25519 节点密钥）
 libp2p-identity = { version = "0.3", features = ["ed25519", "rand", "peerid"] }
 

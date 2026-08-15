@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'control_api_sse.dart';
 import 'control_api_types.dart';
 
 class ControlApi {
@@ -78,6 +79,46 @@ class ControlApi {
       );
     }
     return decoded;
+  }
+
+  /// 订阅控制面事件流（SSE）。[after] 不为空时要求服务器只发送其后的事件；
+  /// 服务器会用 `stream.ready` / `snapshot.required` 首事件说明可恢复性。
+  ///
+  /// 流在服务端关闭或连接断开时结束；消费者应重连并以
+  /// `snapshot.required` + sequence 缺口检测驱动快照重读。
+  Stream<SseEvent> events({int? after}) async* {
+    final query = after == null ? '' : '?after=$after';
+    final request = await _client.openUrl(
+      'GET',
+      Uri.parse('$endpoint/events$query'),
+    );
+    request.followRedirects = false;
+    request.headers.contentType = ContentType.json;
+    if (token.trim().isNotEmpty) {
+      request.headers.set(
+        HttpHeaders.authorizationHeader,
+        'Bearer ${token.trim()}',
+      );
+    }
+    final response = await request.close().timeout(const Duration(seconds: 20));
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final bytes = <int>[];
+      await for (final chunk in response) {
+        bytes.addAll(chunk);
+        if (bytes.length > 64 * 1024) break;
+      }
+      final text = utf8.decode(bytes, allowMalformed: true);
+      throw ControlApiException(
+        text.trim().isEmpty ? '事件流连接失败' : text.trim(),
+        statusCode: response.statusCode,
+      );
+    }
+    final parser = SseParser();
+    await for (final chunk in response.transform(utf8.decoder)) {
+      for (final event in parser.add(chunk)) {
+        yield event;
+      }
+    }
   }
 
   void close() => _client.close(force: true);

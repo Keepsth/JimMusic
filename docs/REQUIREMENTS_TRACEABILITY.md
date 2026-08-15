@@ -120,7 +120,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | COM-009 | 部分实现 | 内置签名 bootstrap 可独立禁用/永久移除且重启不复现；支持裸 CID、ipfs://、ipns://、jimmusic:// URI 与粘贴式 UI；测试 | 启动源尚未发布远端 Feed 头，缺相机二维码扫描与 IPNS/Kubo 互操作实测 |
 | COM-010 | 本机通过 | ModerationReport 验签/匿名约束；X25519 + XChaCha20-Poly1305 封装/解密/篡改拒绝；持久离线队列、30s–1h 指数退避、显式重试；明文不出站测试；API/UI | 七端 UX、真实维护者端和抓包证据待 RC |
 | COM-011 | 部分实现 | policy decision 返回来源、动作、原因、到期和本地覆盖 | UI 申诉/逐条覆盖非强制策略未实现 |
-| COM-012 | 部分实现 | 按头 CID 增量回溯并限制 hop，已见事件不重复摄取 | snapshot、压缩和完整大小上限未实现 |
+| COM-012 | 本机通过 | 按头 CID 增量回溯并限制 hop、已见事件不重复摄取；FeedLimits（事件数/字节）在摄取时强制；紧凑快照（每目标最新未过期事件）锚定签名事件链头，快照端点支持 `Accept-Encoding: gzip` 传输压缩、`x-snapshot-sha256`/`x-snapshot-bytes` 完整性头与 32 MiB 未压缩上限（超限 413 结构化错误）；API 测试 | 大型远端 Feed 的跨版本压缩快照与七端消费实测待验收 |
 | COM-013 | 本机通过 | 连续 key event Feed；轮换需旧/新双签名，撤销终止后续 Feed，未知直接替换被拒；API/UI/负向测试 | 七端交互与恢复证据待 RC |
 
 ## UI、API 与安全
@@ -141,7 +141,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | API-002 | 本机通过 | DTO/事件/错误/网络对象 `schema_version`，严格 canonical 解码限制；协议测试 | 跨语言兼容向量待补 |
 | API-003 | 本机通过 | 所有 HTTP mutation 强制 Idempotency-Key/request_id，指纹冲突和持久 replay；API 测试 | 旧 legacy 路由只返回 410，不迁移副作用 |
 | API-004 | 部分实现 | 稳定错误信封与播放失败模型 | Flutter 尚未按所有机器码做一致本地化动作 |
-| API-005 | 本机通过 | 单调 sequence SSE、after 检测、snapshot.required 与快照端点；测试 | Flutter 当前仍轮询，未消费 SSE |
+| API-005 | 本机通过 | 单调 sequence SSE、after 检测、snapshot.required 与快照端点；Flutter 已改为消费 `/v1/events`：sequence 缺口与 snapshot.required 触发整体重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询；解析器/真实 HTTP SSE/Provider 测试（`control_api_sse_test.dart`，13 项） | Web fetch 流式 SSE 路径与七端断线重连待实机/浏览器验收 |
 | API-006 | 部分实现 | 默认回环、启动必需 bearer token、常量时间校验；Flutter 拒绝非 HTTPS 远程 | 服务端 TLS/CORS/远程开启审计未完整实现 |
 | API-007 | 部分实现 | `docs/API_MIGRATION.md`、v1 路径、状态 schema、回滚原则 | 数据库升级/降级测试矩阵不完整 |
 | SEC-001 | 部分实现 | 发布者 seed 仅存在于加密 bundle；状态文件 0600；明文搜索测试 | 未使用系统 Keychain/Keystore，节点 key 为 0600 文件 |

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::convert::Infallible;
+use std::io::Write;
 use std::path::PathBuf as FilePath;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,12 +11,16 @@ use app_core::identity::{EncryptedIdentityBundleV1, PublisherIdentityVault};
 use app_core::library_service::PlaybackSessionV1;
 use app_core::node_service::NodeConfig;
 use app_core::Event;
+use axum::body::Body;
 use axum::extract::{Path, Query, State};
+use axum::http::header::{ACCEPT_ENCODING, CONTENT_ENCODING};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::sse::{Event as SseEvent, KeepAlive};
 use axum::response::{IntoResponse, Response, Sse};
 use axum::routing::{delete, get, patch, post, put};
 use axum::{Json, Router};
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use futures::StreamExt;
 use jimmusic_protocol::{
     cid_v1_for, AudioGraphSpecV1, CatalogEventV1, CommunitySourceManifestV1, ErrorEnvelopeV1,
@@ -152,6 +157,17 @@ impl ApiError {
         Self::new(
             StatusCode::CONFLICT,
             "conflict",
+            subsystem,
+            operation,
+            error,
+            false,
+        )
+    }
+
+    fn payload_too_large(subsystem: &str, operation: &str, error: impl ToString) -> Self {
+        Self::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "payload_too_large",
             subsystem,
             operation,
             error,
@@ -1409,10 +1425,20 @@ async fn apply_maintainer_key_event(
     ))
 }
 
+/// 快照响应（未压缩形态）的字节上限；超出时拒绝并提示使用 gzip 传输。
+const MAX_SNAPSHOT_BYTES: usize = 32 * 1024 * 1024;
+
+/// 社区源 Catalog/Policy 快照（COM-012）。
+///
+/// 快照本身是"每目标最新未过期事件"的紧凑形态并锚定到签名事件链头；
+/// 传输层支持 gzip：请求带 `Accept-Encoding: gzip` 时压缩返回。两种形态都携带
+/// 未压缩字节的 SHA-256（`x-snapshot-sha256`）与长度（`x-snapshot-bytes`），
+/// 压缩形态另有 `x-snapshot-compressed-bytes`，供客户端校验完整性。
 async fn source_snapshot(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Path(id): Path<String>,
-) -> ApiResult<serde_json::Value> {
+) -> Result<Response, ApiError> {
     let timestamp = now();
     let catalog = state
         .community
@@ -1422,11 +1448,51 @@ async fn source_snapshot(
         .community
         .snapshot_policy(&id, timestamp)
         .map_err(|_| ApiError::not_found("community", "snapshot", &id))?;
-    Ok(Json(serde_json::json!({
+    let plain = serde_json::to_vec(&serde_json::json!({
         "source_id": id,
         "catalog": catalog,
         "policy": policy,
-    })))
+    }))
+    .map_err(|error| ApiError::bad_request("community", "snapshot", error))?;
+    if plain.len() > MAX_SNAPSHOT_BYTES {
+        return Err(ApiError::payload_too_large(
+            "community",
+            "snapshot",
+            format!(
+                "snapshot exceeds {MAX_SNAPSHOT_BYTES} bytes uncompressed; retry with `Accept-Encoding: gzip`"
+            ),
+        ));
+    }
+    let digest = crate::state::sha256_hex(&plain);
+    let builder = Response::builder()
+        .header("content-type", "application/json")
+        .header("x-snapshot-sha256", digest)
+        .header("x-snapshot-bytes", plain.len().to_string());
+    let wants_gzip = headers
+        .get(ACCEPT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value
+                .split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("gzip"))
+        });
+    if wants_gzip {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder
+            .write_all(&plain)
+            .map_err(|error| ApiError::bad_request("community", "snapshot", error))?;
+        let compressed = encoder
+            .finish()
+            .map_err(|error| ApiError::bad_request("community", "snapshot", error))?;
+        return builder
+            .header(CONTENT_ENCODING, "gzip")
+            .header("x-snapshot-compressed-bytes", compressed.len().to_string())
+            .body(Body::from(compressed))
+            .map_err(|error| ApiError::bad_request("community", "snapshot", error));
+    }
+    builder
+        .body(Body::from(plain))
+        .map_err(|error| ApiError::bad_request("community", "snapshot", error))
 }
 
 #[derive(Debug, Deserialize)]
@@ -2842,6 +2908,121 @@ mod tests {
         assert!(body.contains("encrypted_envelope"));
         assert!(!body.contains("private detail"));
         assert!(!body.contains("bafy-evidence"));
+    }
+
+    #[tokio::test]
+    async fn snapshot_endpoint_supports_gzip_with_verifiable_digest() {
+        use flate2::read::GzDecoder;
+        use std::io::Read;
+
+        let (state, _dir) = state();
+        let maintainer = SigningKey::from_bytes(&[23; 32]);
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "snapshot.example".into(),
+            name: "Snapshot".into(),
+            description: "compression test source".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: None,
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+
+        // 写入较大 Catalog Feed，确保 gzip 传输形态确实更小。
+        let mut previous: Option<String> = None;
+        for index in 0..80u64 {
+            let mut event = CatalogEventV1 {
+                schema_version: SCHEMA_V1,
+                action: jimmusic_protocol::CatalogAction::Include,
+                target_type: "music_manifest".into(),
+                target_cid: format!("bafy-target-{index}"),
+                categories: vec!["music".into(), "ambient".into()],
+                tags: vec!["chill".into(), "lossless".into()],
+                annotation: Some(
+                    "A deliberately verbose annotation for feed compression coverage. ".repeat(6),
+                ),
+                sequence: index,
+                previous_event_cid: previous.clone(),
+                expires_at: None,
+                issued_at: 2,
+                signature: None,
+            };
+            event.signature = Some(hex::encode(
+                maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+            ));
+            let cid = state
+                .community
+                .ingest_catalog("snapshot.example", event, &state.node)
+                .unwrap();
+            previous = Some(cid);
+        }
+
+        // 压缩请求：Content-Encoding gzip，摘要头可复验，解压后内容一致。
+        let response = routes()
+            .with_state(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri("/community-sources/snapshot.example/snapshot")
+                    .header("accept-encoding", "gzip")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let response_headers = response.headers().clone();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(response_headers["content-encoding"], "gzip");
+        let digest = response_headers["x-snapshot-sha256"].to_str().unwrap();
+        let mut plain = Vec::new();
+        GzDecoder::new(&bytes[..]).read_to_end(&mut plain).unwrap();
+        assert_eq!(crate::state::sha256_hex(&plain), digest);
+        assert_eq!(
+            response_headers["x-snapshot-bytes"].to_str().unwrap(),
+            plain.len().to_string()
+        );
+        assert!(
+            bytes.len() < plain.len(),
+            "gzip 传输应小于未压缩快照（{} >= {}）",
+            bytes.len(),
+            plain.len()
+        );
+        let snapshot: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        assert_eq!(snapshot["source_id"], "snapshot.example");
+        assert_eq!(snapshot["catalog"]["entries"].as_array().unwrap().len(), 80);
+
+        // 未请求压缩时保持普通 JSON 响应。
+        let (status, json) = call(
+            routes(),
+            state,
+            "GET",
+            "/community-sources/snapshot.example/snapshot",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(json["source_id"], "snapshot.example");
+        assert_eq!(json["catalog"]["entries"].as_array().unwrap().len(), 80);
     }
 
     #[test]

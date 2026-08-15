@@ -1,3 +1,4 @@
+import 'control_api_sse.dart';
 import 'control_api_types.dart';
 
 class ControlApi {
@@ -13,5 +14,6 @@ class ControlApi {
   Future<dynamic> put(String path, Object? body) async => _unsupported();
   Future<dynamic> patch(String path, Object? body) async => _unsupported();
   Future<dynamic> delete(String path) async => _unsupported();
+  Stream<SseEvent> events({int? after}) async* {}
   void close() {}
 }

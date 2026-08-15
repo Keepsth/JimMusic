@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../services/control_api.dart';
+import '../services/control_api_sse.dart';
 import '../services/persistence_service.dart';
 import '../services/rust_bridge.dart';
 import '../services/web_node_service.dart';
@@ -28,11 +30,24 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> _moderationReports = [];
   List<Map<String, dynamic>> _pins = [];
   Object? _lastResult;
-  Timer? _poller;
+  StreamSubscription<SseEvent>? _eventSub;
+  int? _lastSequence;
+  bool _sseConnected = false;
+  int _reconnectAttempts = 0;
+  Timer? _reconnectTimer;
+  Timer? _fallbackPoller;
+  Timer? _coalesceTimer;
+  bool _fullRefreshPending = false;
+  final Set<String> _targetedPaths = {};
+  bool _disposed = false;
   final WebNodeService _webNode = WebNodeService();
   final RustBridge _rustBridge = RustBridge.instance;
   String? _nativeNodeRoot;
   bool _observingLifecycle = false;
+
+  /// 测试注入点：创建 ControlApi 的工厂。
+  @visibleForTesting
+  ControlApi Function(String endpoint, String token)? debugApiFactory;
 
   String get endpoint => _endpoint;
   String get token => _token;
@@ -67,56 +82,95 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
       _refreshDeviceNode(start: true),
     ]);
     await refresh();
-    _ensurePolling();
+    _ensureEventStream();
   }
 
   Future<void> configure(String endpoint, String token) async {
     _endpoint = endpoint.trim();
     _token = token.trim();
     await PersistenceService.saveControlEndpoint(_endpoint);
+    _stopEventStream();
+    _lastSequence = null;
     await refresh();
-    _ensurePolling();
+    _ensureEventStream();
   }
 
-  Future<void> refresh() async {
+  /// 全部视图数据统一快照。
+  Future<void> refresh() => _refreshPaths(const [
+    '/health',
+    '/node/status',
+    '/node/config',
+    '/pins',
+    '/transfers',
+    '/plugins',
+    '/community-sources',
+    '/moderation-reports',
+    '/audio/path',
+    '/audio/stats',
+    '/audio/graph',
+  ]);
+
+  /// 按指定路径做轻量刷新（SSE 事件驱动的定向更新）。
+  Future<void> _refreshPaths(List<String> paths) async {
     if (_loading) return;
     _loading = true;
     _error = null;
     notifyListeners();
-    final api = ControlApi(endpoint: _endpoint, token: _token);
+    final api = _makeApi();
     try {
-      final values = await Future.wait<dynamic>([
-        api.get('/health'),
-        api.get('/node/status'),
-        api.get('/node/config'),
-        api.get('/pins'),
-        api.get('/transfers'),
-        api.get('/plugins'),
-        api.get('/community-sources'),
-        api.get('/moderation-reports'),
-        api.get('/audio/path'),
-        api.get('/audio/stats'),
-        api.get('/audio/graph'),
-      ]);
-      _health = _map(values[0]);
-      _node = _map(values[1]);
-      _nodeConfig = _map(values[2]);
-      _pins = _list(values[3]);
-      _transfers = _list(values[4]);
-      _plugins = _list(values[5]);
-      _communitySources = _list(values[6]);
-      _moderationReports = _list(values[7]);
-      _audioPath = _map(values[8]);
-      _audioStats = _map(values[9]);
-      _audioGraph = _map(values[10]);
+      final values = await Future.wait<dynamic>(
+        paths.map((path) => api.get(path)),
+      );
+      for (var i = 0; i < paths.length; i++) {
+        _applyPath(paths[i], values[i]);
+      }
     } catch (error) {
       _error = error.toString();
     } finally {
       api.close();
       await Future.wait([_refreshBrowserNode(), _refreshDeviceNode()]);
       _loading = false;
+      if (_error == null) {
+        _ensureEventStream();
+      } else {
+        // 控制面暂时不可达：交兜底轮询与退避重连，健康后自动恢复事件流。
+        _onSseDisconnect();
+      }
       notifyListeners();
     }
+  }
+
+  void _applyPath(String path, dynamic value) {
+    switch (path) {
+      case '/health':
+        _health = _map(value);
+      case '/node/status':
+        _node = _map(value);
+      case '/node/config':
+        _nodeConfig = _map(value);
+      case '/pins':
+        _pins = _list(value);
+      case '/transfers':
+        _transfers = _list(value);
+      case '/plugins':
+        _plugins = _list(value);
+      case '/community-sources':
+        _communitySources = _list(value);
+      case '/moderation-reports':
+        _moderationReports = _list(value);
+      case '/audio/path':
+        _audioPath = _map(value);
+      case '/audio/stats':
+        _audioStats = _map(value);
+      case '/audio/graph':
+        _audioGraph = _map(value);
+    }
+  }
+
+  ControlApi _makeApi() {
+    final factory = debugApiFactory;
+    if (factory != null) return factory(_endpoint, _token);
+    return ControlApi(endpoint: _endpoint, token: _token);
   }
 
   Future<void> createTransfer({
@@ -419,12 +473,159 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void _ensurePolling() {
-    if (!connected || _poller != null) return;
-    _poller = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => unawaited(refresh()),
+  // ---------- 事件流（SSE）----------
+  //
+  // 控制面 `/v1/events` 提供带单调 sequence 的 SSE。此处以事件流为主，
+  // 断开时指数退避重连并以 30s 慢轮询兜底；收到 `snapshot.required`、
+  // `stream.ready` 或检测到 sequence 缺口时整体重读快照，其余事件做
+  // 300ms 合并的定向刷新。这满足 API-005：消费事件而非依赖定时轮询。
+
+  /// 健康时启动事件流（幂等）。
+  void _ensureEventStream() {
+    if (_disposed || !connected || _eventSub != null) return;
+    _connectEventStream();
+  }
+
+  void _connectEventStream() {
+    if (_disposed) return;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    final api = _makeApi();
+    _eventSub = api.events(after: _lastSequence).listen(
+      _onSseEvent,
+      onError: (Object error) => _onSseDisconnect(),
+      onDone: _onSseDisconnect,
     );
+  }
+
+  void _stopEventStream() {
+    _eventSub?.cancel();
+    _eventSub = null;
+    _sseConnected = false;
+  }
+
+  void _onSseDisconnect() {
+    _stopEventStream();
+    if (_disposed) return;
+    _startFallbackPoller();
+    final shift = math.min(_reconnectAttempts, 5);
+    _reconnectAttempts++;
+    final delay = Duration(seconds: 1 << shift);
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(delay, () {
+      if (_disposed) return;
+      if (_eventSub == null && connected) _connectEventStream();
+    });
+  }
+
+  void _onSseEvent(SseEvent event) {
+    _sseConnected = true;
+    _reconnectAttempts = 0;
+    _stopFallbackPoller();
+
+    final sequence = event.sequence;
+    if (sequence != null) {
+      // 检测 sequence 缺口：期间必有事件丢失，整体重读快照。
+      if (_lastSequence != null && sequence > _lastSequence! + 1) {
+        _scheduleFullRefresh();
+      }
+      if (_lastSequence == null || sequence > _lastSequence!) {
+        _lastSequence = sequence;
+      }
+    }
+
+    switch (event.eventType) {
+      case 'snapshot.required':
+      case 'stream.ready':
+        // 服务器在载荷中给出最新 sequence，采纳后整体重读快照。
+        _adoptPayloadSequence(event.json);
+        _scheduleFullRefresh();
+      case 'transfer.state_changed':
+      case 'transfer.progress':
+        _scheduleTargeted(['/transfers']);
+      case 'node.status_changed':
+        _scheduleTargeted(['/node/status', '/node/config']);
+      case 'plugin.state_changed':
+      case 'plugin.revoked':
+        _scheduleTargeted(['/plugins']);
+      case 'community_source.updated':
+      case 'policy.decision_changed':
+        _scheduleTargeted(['/community-sources', '/moderation-reports']);
+      case 'audio.graph_changed':
+        _scheduleTargeted(['/audio/path', '/audio/stats', '/audio/graph']);
+      case 'audio.xrun':
+      case 'audio.device_changed':
+        _scheduleTargeted(['/audio/stats', '/audio/path']);
+      case 'playback.state_changed':
+      case 'playback.position':
+      case 'playback.completed':
+      case 'playback.transitioned':
+      case 'playback.error':
+        // 播放状态由播放页的桥事件直接承载，控制中心无需响应。
+        break;
+      case 'publication.changed':
+        break;
+      default:
+        // 未知事件类型：保守整体重读，保持对服务器新事件的前向兼容。
+        _scheduleFullRefresh();
+    }
+  }
+
+  void _adoptPayloadSequence(Map<String, dynamic>? payload) {
+    final sequence = payload?['sequence'];
+    if (sequence is int && (_lastSequence == null || sequence > _lastSequence!)) {
+      _lastSequence = sequence;
+    }
+  }
+
+  void _scheduleTargeted(List<String> paths) {
+    _targetedPaths.addAll(paths);
+    _coalesceTimer ??= Timer(
+      const Duration(milliseconds: 300),
+      _drainScheduledRefresh,
+    );
+  }
+
+  void _scheduleFullRefresh() {
+    _fullRefreshPending = true;
+    _coalesceTimer ??= Timer(
+      const Duration(milliseconds: 300),
+      _drainScheduledRefresh,
+    );
+  }
+
+  Future<void> _drainScheduledRefresh() async {
+    _coalesceTimer = null;
+    if (_loading) {
+      // 有刷新正在执行：稍后重排，避免丢更新。
+      _coalesceTimer = Timer(
+        const Duration(milliseconds: 300),
+        _drainScheduledRefresh,
+      );
+      return;
+    }
+    final full = _fullRefreshPending;
+    final paths = _targetedPaths.toList();
+    _fullRefreshPending = false;
+    _targetedPaths.clear();
+    if (full) {
+      await refresh();
+    } else if (paths.isNotEmpty) {
+      await _refreshPaths(paths);
+    }
+  }
+
+  void _startFallbackPoller() {
+    if (_fallbackPoller != null) return;
+    _fallbackPoller = Timer.periodic(const Duration(seconds: 30), (_) {
+      if (_sseConnected) return;
+      unawaited(refresh());
+    });
+  }
+
+  void _stopFallbackPoller() {
+    _fallbackPoller?.cancel();
+    _fallbackPoller = null;
   }
 
   Future<void> _refreshBrowserNode({bool start = false}) async {
@@ -489,7 +690,11 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
-    _poller?.cancel();
+    _disposed = true;
+    _stopEventStream();
+    _reconnectTimer?.cancel();
+    _fallbackPoller?.cancel();
+    _coalesceTimer?.cancel();
     if (_observingLifecycle) {
       WidgetsBinding.instance.removeObserver(this);
       _observingLifecycle = false;

@@ -69,9 +69,12 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 217 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 218 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
-- Flutter analyze 零问题，20 项测试通过（含 Rust 音频/节点 FFI）；
+- Flutter analyze 零问题，33 项测试通过（含 Rust 音频/节点 FFI 与控制面 SSE 流）；
+- Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照
+  重读、事件分组 300ms 合并定向刷新、断开退避重连与 30s 兜底轮询，不再依赖 5s 定时轮询；
+- 社区源紧凑快照端点支持 gzip 传输压缩、SHA-256/字节数完整性头与 32 MiB 未压缩上限；
 - Helia 依赖生产审计为 0 个漏洞；bundle 构建和 Rust↔Helia 无网关互操作通过；
 - Rust workspace、Flutter Web、Flutter Linux release build 通过；Linux bundle 已注入三个
   原生库且动态依赖无缺失；
@@ -87,7 +90,7 @@
 - Web/移动插件执行载体与社区原生插件独立进程隔离待闭环；
 - Web gapless/crossfade、真实独占输出、ASIO/CoreAudio Hog、ALSA hw、DSD Native/DoP 待实机；
 - Flutter 本地曲库与后端 Manifest/社区曲库尚未统一；移动后台/锁屏控制缺失；
-- 内置签名启动源当前没有远端 Feed 头，二维码相机扫描及 Feed snapshot/压缩缺失；
+- 内置签名启动源当前没有远端 Feed 头，二维码相机扫描缺失（Feed 快照/gzip/上限已落地，远端实测待补）；
 - 七端同候选安装/离线/E2E、硬件实验室、M0 资源/两小时、无障碍、迁移/断电恢复报告未取得；
 - 受控 tag 的签名产物、SBOM、摘要和 provenance 尚未实际生成并复验。
 
