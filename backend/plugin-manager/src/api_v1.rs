@@ -68,6 +68,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             patch(update_source).delete(remove_source),
         )
         .route("/community-sources/{id}/refresh", post(refresh_source))
+        .route("/community-sources/refresh-queue", get(list_refresh_queue))
         .route(
             "/community-sources/{id}/catalog-events",
             post(ingest_catalog),
@@ -186,6 +187,18 @@ impl ApiError {
             operation,
             error,
             false,
+        )
+    }
+
+    /// 服务暂时不可用（可重试；COM-008 离线刷新队列使用）。
+    fn unavailable(subsystem: &str, operation: &str, error: impl ToString) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "unavailable",
+            subsystem,
+            operation,
+            error,
+            true,
         )
     }
 
@@ -1565,16 +1578,24 @@ async fn remove_source(
     Ok(Json(serde_json::json!({"removed": id})))
 }
 
-async fn refresh_source(
-    State(state): State<Arc<AppState>>,
-    Path(id): Path<String>,
-) -> ApiResult<serde_json::Value> {
+/// 刷新结果分类：网络不可用（fetch_failed）进入离线队列，其余错误直接失败。
+enum RefreshOutcome {
+    Refreshed {
+        catalog_ingested: usize,
+        policy_ingested: usize,
+    },
+    Offline {
+        error: String,
+    },
+}
+
+async fn refresh_source_inner(state: &Arc<AppState>, id: &str) -> Result<RefreshOutcome, ApiError> {
     let source = state
         .community
         .list_sources()
         .into_iter()
         .find(|source| source.manifest.source_id == id)
-        .ok_or_else(|| ApiError::not_found("community", "refresh", &id))?;
+        .ok_or_else(|| ApiError::not_found("community", "refresh", id))?;
     let mut catalog_ingested = 0usize;
     if source.catalog_enabled {
         if let Some(head) = source.manifest.catalog_head.as_deref() {
@@ -1588,7 +1609,15 @@ async fn refresh_source(
                         "catalog chain exceeds 10,000 event limit",
                     ));
                 }
-                let bytes = fetch_dag_object(&state, &cid).await?;
+                let bytes = match fetch_dag_object(state, &cid).await {
+                    Ok(bytes) => bytes,
+                    Err(error) if error.body.code == "fetch_failed" => {
+                        return Ok(RefreshOutcome::Offline {
+                            error: error.body.message.clone(),
+                        });
+                    }
+                    Err(error) => return Err(error),
+                };
                 let event: CatalogEventV1 = jimmusic_protocol::decode_dag_cbor(&bytes)
                     .map_err(|error| ApiError::bad_request("community", "decode_catalog", error))?;
                 if source
@@ -1604,7 +1633,7 @@ async fn refresh_source(
             for event in events {
                 state
                     .community
-                    .ingest_catalog(&id, event, &state.node)
+                    .ingest_catalog(id, event, &state.node)
                     .map_err(|error| ApiError::bad_request("community", "ingest_catalog", error))?;
                 catalog_ingested += 1;
             }
@@ -1623,7 +1652,15 @@ async fn refresh_source(
                         "policy chain exceeds 10,000 event limit",
                     ));
                 }
-                let bytes = fetch_dag_object(&state, &cid).await?;
+                let bytes = match fetch_dag_object(state, &cid).await {
+                    Ok(bytes) => bytes,
+                    Err(error) if error.body.code == "fetch_failed" => {
+                        return Ok(RefreshOutcome::Offline {
+                            error: error.body.message.clone(),
+                        });
+                    }
+                    Err(error) => return Err(error),
+                };
                 let event: jimmusic_protocol::PolicyEventV1 =
                     jimmusic_protocol::decode_dag_cbor(&bytes).map_err(|error| {
                         ApiError::bad_request("community", "decode_policy", error)
@@ -1641,23 +1678,91 @@ async fn refresh_source(
             for event in events {
                 state
                     .community
-                    .ingest_policy(&id, event, &state.node)
+                    .ingest_policy(id, event, &state.node)
                     .map_err(|error| ApiError::bad_request("community", "ingest_policy", error))?;
                 policy_ingested += 1;
             }
         }
     }
-    state.events.publish(Event::CommunitySourceChanged {
-        source_id: id.clone(),
-        state: "refreshed".into(),
-    });
-    apply_policy_revocations(&state);
-    Ok(Json(serde_json::json!({
-        "source_id": id,
-        "catalog_ingested": catalog_ingested,
-        "policy_ingested": policy_ingested,
-        "status": "refreshed",
-    })))
+    Ok(RefreshOutcome::Refreshed {
+        catalog_ingested,
+        policy_ingested,
+    })
+}
+
+/// COM-008：网络恢复后重试离线刷新队列中的来源；成功出队，失败更新错误与次数。
+async fn drain_refresh_queue(state: &Arc<AppState>) {
+    for entry in state.community.refresh_queue() {
+        let source_id = entry.source_id.clone();
+        match refresh_source_inner(state, &source_id).await {
+            Ok(RefreshOutcome::Refreshed { .. }) => {
+                if state.community.dequeue_refresh(&source_id).is_ok() {
+                    state.events.publish(Event::CommunitySourceChanged {
+                        source_id: source_id.clone(),
+                        state: "refreshed_from_queue".into(),
+                    });
+                }
+            }
+            Ok(RefreshOutcome::Offline { error }) => {
+                let _ = state.community.enqueue_refresh(&source_id, &error, now());
+            }
+            Err(error) => {
+                let _ = state
+                    .community
+                    .enqueue_refresh(&source_id, &error.body.message, now());
+            }
+        }
+    }
+}
+
+async fn refresh_source(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> ApiResult<serde_json::Value> {
+    let outcome = refresh_source_inner(&state, &id).await;
+    match outcome {
+        Ok(RefreshOutcome::Refreshed {
+            catalog_ingested,
+            policy_ingested,
+        }) => {
+            let _ = state.community.dequeue_refresh(&id);
+            state.events.publish(Event::CommunitySourceChanged {
+                source_id: id.clone(),
+                state: "refreshed".into(),
+            });
+            apply_policy_revocations(&state);
+            drain_refresh_queue(&state).await;
+            Ok(Json(serde_json::json!({
+                "source_id": id,
+                "catalog_ingested": catalog_ingested,
+                "policy_ingested": policy_ingested,
+                "status": "refreshed",
+            })))
+        }
+        Ok(RefreshOutcome::Offline { error }) => {
+            // COM-008：网络不可用时进入离线刷新队列并显式告知（可重试）。
+            state
+                .community
+                .enqueue_refresh(&id, &error, now())
+                .map_err(|error| ApiError::bad_request("community", "refresh_queue", error))?;
+            state.events.publish(Event::CommunitySourceChanged {
+                source_id: id.clone(),
+                state: "refresh_queued".into(),
+            });
+            Err(ApiError::unavailable(
+                "community",
+                "refresh",
+                format!("{error}; refresh queued and will be retried automatically"),
+            ))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+async fn list_refresh_queue(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<app_core::community_service::RefreshQueueEntryV1>> {
+    Json(state.community.refresh_queue())
 }
 
 async fn fetch_dag_object(state: &AppState, cid: &str) -> Result<Vec<u8>, ApiError> {
@@ -4412,6 +4517,131 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(body["message"].as_str().unwrap().contains("mandatory"));
+    }
+
+    #[tokio::test]
+    async fn offline_refresh_is_queued_and_drained_when_network_returns() {
+        use jimmusic_protocol::{canonical_dag_cbor, CatalogAction};
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let gateway = MockServer::start().await;
+        let dir = tempfile::tempdir().unwrap();
+        let state = Arc::new(
+            AppState::new(dir.path().to_string_lossy().into_owned(), gateway.uri()).unwrap(),
+        );
+
+        // 目录头事件：CID 可离线计算，内容先不放本地 CAS / 不挂网关 mock。
+        let maintainer = SigningKey::from_bytes(&[31; 32]);
+        let mut event = CatalogEventV1 {
+            schema_version: SCHEMA_V1,
+            action: CatalogAction::Include,
+            target_type: "music_manifest".into(),
+            target_cid: "bafyoffline".into(),
+            categories: vec!["music".into()],
+            tags: Vec::new(),
+            annotation: None,
+            sequence: 0,
+            previous_event_cid: None,
+            expires_at: None,
+            issued_at: 2,
+            signature: None,
+        };
+        event.signature = Some(hex::encode(
+            maintainer.sign(&event.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        let head_cid = cid_v1_for(&event).unwrap();
+        let head_bytes = canonical_dag_cbor(&event).unwrap();
+
+        let mut source = CommunitySourceManifestV1 {
+            schema_version: SCHEMA_V1,
+            source_id: "offline.example".into(),
+            name: "Offline".into(),
+            description: "offline refresh queue test".into(),
+            languages: vec!["en".into()],
+            maintainer_identity_cid: "bafy-maintainer".into(),
+            catalog_head: Some(head_cid.clone()),
+            policy_head: None,
+            supported_schemas: vec![SCHEMA_V1],
+            report_endpoint: None,
+            report_encryption_public_key: None,
+            updated_at: 1,
+            signature: None,
+        };
+        source.signature = Some(hex::encode(
+            maintainer
+                .sign(&source.unsigned_bytes().unwrap())
+                .to_bytes(),
+        ));
+        state
+            .community
+            .add_source(
+                source,
+                hex::encode(maintainer.verifying_key().to_bytes()),
+                &state.node,
+                0,
+            )
+            .unwrap();
+
+        // 离线：网关 404（默认无 mock）→ fetch_failed → 503 + 入队。
+        let (status, body) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/community-sources/offline.example/refresh",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["code"], "unavailable");
+        assert_eq!(body["retryable"], true);
+        assert!(body["message"].as_str().unwrap().contains("queued"));
+
+        let (status, queue) = call(
+            routes(),
+            state.clone(),
+            "GET",
+            "/community-sources/refresh-queue",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(queue.as_array().unwrap().len(), 1);
+        assert_eq!(queue[0]["source_id"], "offline.example");
+        assert_eq!(queue[0]["attempts"], 1);
+
+        // 网络恢复：网关开始返回目录头对象。
+        Mock::given(method("POST"))
+            .and(path("/api/v0/cat"))
+            .and(query_param("arg", head_cid.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(head_bytes))
+            .expect(1)
+            .mount(&gateway)
+            .await;
+
+        let (status, body) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/community-sources/offline.example/refresh",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["status"], "refreshed");
+        assert_eq!(body["catalog_ingested"], 1);
+
+        // 队列已排空。
+        let (status, queue) = call(
+            routes(),
+            state,
+            "GET",
+            "/community-sources/refresh-queue",
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(queue.as_array().unwrap().is_empty(), "{queue}");
     }
 
     #[tokio::test]

@@ -1270,12 +1270,14 @@ class _CommunityTab extends StatelessWidget {
       ),
       body: control.communitySources.isEmpty &&
               control.moderationReports.isEmpty &&
-              control.follows.isEmpty
+              control.follows.isEmpty &&
+              control.refreshQueue.isEmpty
           ? const Center(child: Text('暂无社区源、关注或举报任务'))
           : ListView.builder(
               padding: const EdgeInsets.only(bottom: 88),
               itemCount:
                   _followsBase(control) +
+                  control.refreshQueue.length +
                   control.communitySources.length +
                   control.moderationReports.length +
                   (control.moderationReports.isEmpty ? 0 : 1),
@@ -1294,8 +1296,7 @@ class _CommunityTab extends StatelessWidget {
                     index > 0 &&
                     index < followsBase) {
                   final follow = control.follows[index - 1];
-                  final identityCid =
-                      '${follow['identity_cid'] ?? '-'}';
+                  final identityCid = '${follow['identity_cid'] ?? '-'}';
                   return Card(
                     margin: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -1319,7 +1320,33 @@ class _CommunityTab extends StatelessWidget {
                     ),
                   );
                 }
-                final shifted = index - followsBase;
+                if (index >= followsBase &&
+                    index < followsBase + control.refreshQueue.length) {
+                  final entry = control.refreshQueue[index - followsBase];
+                  final queuedId = '${entry['source_id'] ?? '-'}';
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      leading: const Icon(Icons.cloud_off),
+                      title: Text('离线刷新排队：$queuedId'),
+                      subtitle: Text(
+                        '已尝试 ${entry['attempts'] ?? 0} 次'
+                        '${entry['last_error'] == null ? '' : ' · ${entry['last_error']}'}',
+                      ),
+                      trailing: IconButton(
+                        tooltip: '立即重试',
+                        onPressed: () => control.refreshCommunity(queuedId),
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ),
+                  );
+                }
+                final shifted = index -
+                    followsBase -
+                    control.refreshQueue.length;
                 if (shifted == control.communitySources.length &&
                     control.moderationReports.isNotEmpty) {
                   return const Padding(

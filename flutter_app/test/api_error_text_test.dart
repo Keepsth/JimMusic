@@ -62,6 +62,22 @@ void main() {
       expect(text.suggestion, contains('稍后重试'));
     });
 
+    test('unavailable 映射离线队列提示', () {
+      final text = apiErrorText(
+        ControlApiException(
+          'x',
+          statusCode: 503,
+          body: {
+            'code': 'unavailable',
+            'subsystem': 'community',
+            'retryable': true,
+          },
+        ),
+      );
+      expect(text.message, contains('离线队列'));
+      expect(text.suggestion, contains('稍后重试'));
+    });
+
     test('未知错误回退原文', () {
       final text = apiErrorText(const ControlApiException('连接被拒绝'));
       expect(text.message, '连接被拒绝');

@@ -116,7 +116,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | COM-005 | 本机通过 | 本地索引支持目标、类别、标签、来源查询；LibraryTrackV1 增加发布者身份 CID，Manifest 导入时记录并参与标题/艺人/专辑/标签/发布者统一全文匹配；Flutter 曲库同步映射 publisher 并纳入列表搜索；服务 1 项 + Flutter 1 项测试 | 大规模数据集的七端性能待验收 |
 | COM-006 | 部分实现 | warn/demote/hide/block/revoke 决策、范围/到期、policy API | 详情与精确打开入口尚未统一应用策略 |
 | COM-007 | 本机通过 | 最高严重度、信任顺序、本地 block 优先与来源解释测试 | UI 冲突矩阵 E2E 待补 |
-| COM-008 | 本机通过 | Catalog/Policy 分别启停、刷新、删除并清理索引/策略；API/UI | 离线刷新队列未实现 |
+| COM-008 | 本机通过 | Catalog/Policy 分别启停、刷新、删除并清理索引/策略；API/UI；离线刷新队列：网络不可用（fetch_failed）时刷新进入持久队列（503 unavailable + retryable 显式告知），网络恢复后下一次刷新自动排空（成功出队、失败累计次数与错误），`GET /v1/community-sources/refresh-queue` 可查，社区页展示排队条目与立即重试；API 测试 1 项 + Flutter 1 项 | 长期离线退避策略与七端交互待验收 |
 | COM-009 | 部分实现 | 内置签名 bootstrap 可独立禁用/永久移除且重启不复现；支持裸 CID、ipfs://、ipns://、jimmusic:// URI 与粘贴式 UI；测试 | 启动源尚未发布远端 Feed 头，缺相机二维码扫描与 IPNS/Kubo 互操作实测 |
 | COM-010 | 本机通过 | ModerationReport 验签/匿名约束；X25519 + XChaCha20-Poly1305 封装/解密/篡改拒绝；持久离线队列、30s–1h 指数退避、显式重试；明文不出站测试；API/UI | 七端 UX、真实维护者端和抓包证据待 RC |
 | COM-011 | 本机通过 | policy decision 返回来源、动作、原因、到期和本地覆盖；本地覆盖/申诉 API（POST/DELETE `/policy/{target}/override`）只作用于 warn/demote/hide，block/revoke 强制拒绝覆盖，取消覆盖恢复社区决策并推送 `policy.decision_changed`；社区页新增策略查询与覆盖对话框；API 测试 1 项 + Flutter 测试 1 项 | 七端交互与申诉全流程待验收 |

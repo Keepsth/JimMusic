@@ -9,11 +9,11 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（239） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖与发布者全文索引，workspace/all targets/all features |
+| Rust tests | 通过（240） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引与离线刷新队列，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（55） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、错误本地化、发布者索引 |
+| Flutter tests | 通过（56） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、错误本地化、发布者索引、离线队列提示 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -34,8 +34,9 @@
 | 蜂窝额度 | 通过 | 每任务蜂窝额度持久计量，超限暂停（结构化原因）并在回 Wi-Fi 后自动恢复；runner 按块计量并安全中止；服务测试 2 项 |
 | 错误本地化 | 通过 | Flutter 统一把稳定错误信封映射为本地化文案 + 重试建议 + 恢复提示，控制台横幅与传输错误行统一消费；5 项测试 |
 | 发布者全文索引 | 通过 | 曲库索引增加发布者身份 CID（Manifest 导入记录），标题/艺人/专辑/标签/发布者统一匹配；Flutter 同步映射并纳入列表搜索；服务 1 项 + Flutter 1 项测试 |
+| 离线刷新队列 | 通过 | 网络不可用时社区源刷新进入持久队列（503 + retryable 显式告知），恢复后自动排空；社区页展示排队与立即重试；API 1 项 + Flutter 1 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 76、部分实现 46、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 77、部分实现 45、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

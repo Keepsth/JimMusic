@@ -58,6 +58,8 @@ String _localizeCode(String code, String subsystem, String? unsupported) {
       return '操作与当前状态冲突$where';
     case 'payload_too_large':
       return '数据超过大小上限$where';
+    case 'unavailable':
+      return '网络暂时不可用$where：操作已加入离线队列，恢复后自动重试';
     case 'idempotency_key_required':
     case 'idempotency_conflict':
       return '请求幂等键缺失或重复$where';

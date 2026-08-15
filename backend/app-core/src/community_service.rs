@@ -115,6 +115,19 @@ struct CommunityRepositoryState {
     followed_publishers: BTreeMap<String, FollowedPublisherV1>,
     #[serde(default)]
     local_overrides: BTreeMap<String, LocalOverrideV1>,
+    #[serde(default)]
+    refresh_queue: BTreeMap<String, RefreshQueueEntryV1>,
+}
+
+/// 离线刷新队列条目（COM-008）：网络不可用时社区源刷新进入队列，
+/// 恢复后在下一次刷新时自动重试。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RefreshQueueEntryV1 {
+    pub schema_version: u16,
+    pub source_id: String,
+    pub queued_at: i64,
+    pub attempts: u32,
+    pub last_error: Option<String>,
 }
 
 /// 本地策略覆盖（COM-011）：对 warn/demote/hide 等非强制社区决策的
@@ -211,6 +224,7 @@ impl CommunitySourceService {
                     removed_bootstrap_sources: BTreeSet::new(),
                     followed_publishers: BTreeMap::new(),
                     local_overrides: BTreeMap::new(),
+                    refresh_queue: BTreeMap::new(),
                     feed_limits: FeedLimits::default(),
                 },
             )?,
@@ -879,6 +893,48 @@ impl CommunitySourceService {
                 .map(|_| ())
         })?;
         Ok(())
+    }
+
+    /// COM-008：把刷新失败（网络不可用）的来源加入离线刷新队列。
+    pub fn enqueue_refresh(
+        &self,
+        source_id: &str,
+        error: &str,
+        timestamp: i64,
+    ) -> Result<RefreshQueueEntryV1, CommunityError> {
+        let mut entry = self
+            .store
+            .snapshot()
+            .refresh_queue
+            .get(source_id)
+            .cloned()
+            .unwrap_or(RefreshQueueEntryV1 {
+                schema_version: SCHEMA_V1,
+                source_id: source_id.into(),
+                queued_at: timestamp,
+                attempts: 0,
+                last_error: None,
+            });
+        entry.attempts = entry.attempts.saturating_add(1);
+        entry.last_error = Some(error.chars().take(500).collect());
+        self.store.transact(|state| {
+            state.refresh_queue.insert(source_id.into(), entry.clone());
+            Ok(())
+        })?;
+        Ok(entry)
+    }
+
+    /// 刷新成功后出队。
+    pub fn dequeue_refresh(&self, source_id: &str) -> Result<(), CommunityError> {
+        self.store.transact(|state| {
+            state.refresh_queue.remove(source_id);
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub fn refresh_queue(&self) -> Vec<RefreshQueueEntryV1> {
+        self.store.snapshot().refresh_queue.into_values().collect()
     }
 
     /// 当前生效（未过期、来源策略已启用）的 Revoke 决策目标集合。
