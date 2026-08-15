@@ -9,6 +9,7 @@ import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../services/control_api_types.dart' show networkPauseHint;
 import '../widgets/plugin_config_form.dart';
+import '../widgets/publish_wizard.dart';
 
 class ControlCenterScreen extends StatelessWidget {
   const ControlCenterScreen({super.key});
@@ -1020,6 +1021,12 @@ class _PublishTab extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         OutlinedButton.icon(
+          onPressed: () => _publishWizard(context),
+          icon: const Icon(Icons.auto_awesome),
+          label: const Text('发布向导（元数据 / rendition 表单）'),
+        ),
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
           onPressed: () => _publish(context),
           icon: const Icon(Icons.verified_outlined),
           label: const Text('提交外部已签名对象'),
@@ -1148,6 +1155,76 @@ class _PublishTab extends StatelessWidget {
           child: SingleChildScrollView(
             child: SelectableText(
               const JsonEncoder.withIndent('  ').convert(control.lastResult),
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('完成'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// UI-004：结构化发布向导——元数据/rendition 表单生成 Manifest，
+  /// 本机签名发布后展示回执与副本健康度（副本向导）。
+  Future<void> _publishWizard(BuildContext context) async {
+    if (!context.mounted) return;
+    final result = await showDialog<(
+      Map<String, dynamic>,
+      String,
+      String,
+      Map<String, dynamic>,
+    )>(
+      context: context,
+      builder: (_) => const PublishWizardDialog(),
+    );
+    if (result == null) return;
+    final (manifest, displayName, passphrase, bundle) = result;
+    await control.signPublication(
+      displayName: displayName,
+      passphrase: passphrase,
+      bundle: bundle,
+      operation: 'publish',
+      manifest: manifest,
+    );
+    if (!context.mounted ||
+        control.error != null ||
+        control.lastResult == null) {
+      return;
+    }
+    final receipt = control.lastResult;
+    final receiptMap = receipt is Map<String, dynamic>
+        ? receipt
+        : const <String, dynamic>{};
+    final manifestCid =
+        (receiptMap['receipt'] as Map<String, dynamic>?)?['manifest_cid'];
+    String healthLine = '副本健康度未查询';
+    if (manifestCid != null) {
+      for (final entry in control.pins) {
+        if (entry['cid'] == manifestCid) {
+          final health = entry['health'] as Map<String, dynamic>?;
+          healthLine =
+              '本机 Pin: ${health?['local_pin'] ?? '-'} · '
+              'Provider 数: ${health?['observed_providers'] ?? '-'} · '
+              '状态: ${health?['health'] ?? '-'} · '
+              '第三方服务: ${(health?['configured_pin_services'] as List<dynamic>? ?? const []).length}';
+          break;
+        }
+      }
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('发布完成'),
+        content: SizedBox(
+          width: 680,
+          child: SingleChildScrollView(
+            child: SelectableText(
+              '${const JsonEncoder.withIndent('  ').convert(control.lastResult)}'
+              '\n\n副本健康度：$healthLine',
             ),
           ),
         ),

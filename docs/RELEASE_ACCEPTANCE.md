@@ -13,7 +13,7 @@
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
-| Flutter tests | 通过（68） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、网络曲目播放入口、音乐目录设置、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
+| Flutter tests | 通过（71） | provider/model/widget、Rust 播放/输出会话/节点 FFI、控制面 SSE 解析/真实 HTTP 流/Provider 缺口重读、边下边播代理链路、播放页来源/缓冲/传输状态、关注发布者与策略覆盖 mutation、曲库统一同步、网络曲目播放入口、音乐目录设置、发布向导、错误本地化、发布者索引、离线队列提示、播放模式与队列边界、声明式配置控件与敏感字段、操作取消 |
 | Rust release build | 通过 | 当前 Linux host，workspace |
 | Flutter Web release build | 通过 | 当前 Linux host，包含 Worklet 静态资源；Rust PCM 桥仍未接通 |
 | Flutter Linux release build | 通过 | 当前 Linux host，已注入 Core/null/system 三个动态库，`ldd` 无缺失项 |
@@ -46,8 +46,9 @@
 | 状态版本保护 | 通过 | 五个核心存储拒绝未来 schema_version（降级保护、保留原文件），旧版本前向兼容；2 项测试 |
 | 网络曲目播放入口 | 通过 | 网络曲目（Manifest/社区）与本地曲目同一入口：按内容 CID 建幂等 fetch 传输并边下边播；Flutter 1 项测试 |
 | 音乐目录设置 | 通过 | 曲库页查询/设置音乐目录（仅切换语义并明示复制/移动未实现）；Flutter 1 项测试 |
+| 发布向导 | 通过 | 元数据/rendition 表单校验生成 Manifest，签名发布后展示回执与副本健康度（本机 Pin/Provider/第三方服务）；3 项测试 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 87、部分实现 35、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 88、部分实现 34、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 
