@@ -54,7 +54,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | AGR-010 | 部分实现 | Core 双解码时间线、sample-contiguous gapless、linear/equal-power crossfade、曲目边界事件与队列/FFI 测试 | Web just_audio 回退和七端音频语料验收待补 |
 | AGR-011 | 部分实现 | 图提交回滚、节点 failure policy 契约 | 尚无可执行 DSP 节点崩溃/超时注入链路 |
 | AGR-012 | 部分实现 | 图延迟、缓冲、deadline/underrun/overrun 统计与诊断/UI | 缺逐节点 CPU 指标 |
-| AGR-013 | 部分实现 | 图/节点 DTO 可序列化；插件状态 schema 与回滚 | 音频节点状态迁移和持久图恢复不完整 |
+| AGR-013 | 本机通过 | 图/节点 DTO 可序列化；插件状态 schema 与回滚；音频图状态持久化（`AudioGraphManager::open`：默认图落盘、重启恢复、未来 schema 拒绝且保留原文件、损坏拒绝不覆盖），图提交原子持久化且持久化失败回滚内存图，PUT /v1/audio/graph 映射结构化错误；测试 3 项 | 七端实测待补 |
 | AGR-014 | 本机通过 | Output ABI 适配 `null-output`、CPAL system output；FFI 测试 | 非 Linux 原生输出仅待平台构建/实机证据 |
 | PLG-001 | 本机通过 | 内容寻址 `PluginManifestV1` 与按 platform/arch/runtime 选择制品 | Web/iOS 目录实测待 CI |
 | PLG-002 | 本机通过 | Manifest Validate 覆盖 ID、版本、发布者、ABI、权限、依赖、Schema、许可证、CID | 未知字段严格策略仍需跨版本契约测试 |

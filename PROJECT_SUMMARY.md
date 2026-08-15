@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 256 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 259 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，96 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -131,6 +131,8 @@
   token 强制；
 - 状态版本保护（API-007/NFR-014）：五个核心存储拒绝未来 schema_version（降级保护、
   保留原文件），旧版本按 serde 默认前向兼容；
+- 音频图持久状态（AGR-013）：音频图状态持久化（首次启动落盘、重启恢复、未来
+  schema/损坏拒绝且保留原文件），图提交原子持久化，持久化失败回滚内存图；
 - 网络曲目播放入口（PLR-007）：网络曲目（Manifest/社区）与本地曲目在列表同一入口
   播放——按内容 CID 建立幂等 fetch 传输并边下边播；
 - Rendition 选择（DST-002）：全部 rendition 源随曲库同步映射到客户端，播放前按平台

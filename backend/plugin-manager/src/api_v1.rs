@@ -2993,7 +2993,10 @@ async fn put_audio_graph(
         .audio_graph
         .validate_and_compile(spec)
         .map_err(|error| ApiError::bad_request("audio_graph", "compile", error))?;
-    state.audio_graph.commit(candidate);
+    state
+        .audio_graph
+        .commit(candidate)
+        .map_err(|error| ApiError::conflict("audio_graph", "persist", error))?;
     let snapshot = state.audio_graph.audio_path();
     state.events.publish(Event::AudioGraphChanged {
         graph_id: snapshot.graph_id.clone(),

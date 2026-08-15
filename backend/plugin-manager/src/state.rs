@@ -185,7 +185,8 @@ impl AppState {
         let reliability = ReliabilityService::open(repo.join("reliability.json"))
             .map_err(std::io::Error::other)?;
         let audio_graph =
-            AudioGraphManager::new(default_audio_graph()).map_err(std::io::Error::other)?;
+            AudioGraphManager::open(repo.join("audio-graph.json"), default_audio_graph())
+                .map_err(std::io::Error::other)?;
         let transfer_slots = Arc::new(tokio::sync::RwLock::new(Arc::new(
             tokio::sync::Semaphore::new(node.config().max_concurrent_transfers.max(1) as usize),
         )));

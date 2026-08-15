@@ -6,6 +6,7 @@
 use std::cell::UnsafeCell;
 use std::collections::{HashMap, VecDeque};
 use std::mem::MaybeUninit;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -15,7 +16,7 @@ use jimmusic_protocol::{
     AudioNodeType, AudioPortSpecV1, Validate,
 };
 use plugin_abi::audio_v2::ParameterEventV2;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const DEFAULT_BLOCK_FRAMES: u32 = 512;
 const FORMAT_CONVERTER_LATENCY_FRAMES: u32 = 32;
@@ -57,6 +58,10 @@ pub enum GraphError {
     ParameterQueueFull,
     #[error("no rollback graph is available")]
     NoRollback,
+    #[error("audio graph state IO failed: {0}")]
+    Io(String),
+    #[error("audio graph state schema {found} is newer than this build ({current}); downgrade is not supported")]
+    FutureSchema { found: u16, current: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -548,6 +553,18 @@ pub struct AudioGraphManager<const PARAMETER_CAPACITY: usize = 1024> {
     rollback: Mutex<Vec<Arc<CompiledGraph>>>,
     parameters: ParameterQueue<PARAMETER_CAPACITY>,
     stats: AudioGraphStats,
+    /// AGR-013：持久化路径（`open` 设置；`new` 为 None，仅内存）。
+    persist_path: Option<PathBuf>,
+}
+
+/// AGR-013：持久化音频图状态的当前 schema 版本。
+pub const GRAPH_STATE_SCHEMA: u16 = 1;
+
+/// AGR-013：持久化音频图状态（图 spec + schema 版本保护）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedGraphStateV1 {
+    pub schema_version: u16,
+    pub spec: AudioGraphSpecV1,
 }
 
 impl<const PARAMETER_CAPACITY: usize> AudioGraphManager<PARAMETER_CAPACITY> {
@@ -560,7 +577,83 @@ impl<const PARAMETER_CAPACITY: usize> AudioGraphManager<PARAMETER_CAPACITY> {
             rollback: Mutex::new(Vec::new()),
             parameters: ParameterQueue::new(),
             stats: AudioGraphStats::default(),
+            persist_path: None,
         })
+    }
+
+    /// AGR-013：从持久化状态恢复图（不存在→默认；损坏或未来 schema →
+    /// 结构化错误且不覆盖原文件）。
+    pub fn open(path: impl AsRef<Path>, initial: AudioGraphSpecV1) -> Result<Self, GraphError> {
+        let path = path.as_ref().to_path_buf();
+        let spec = match std::fs::read(&path) {
+            Ok(bytes) => {
+                let state: PersistedGraphStateV1 =
+                    serde_json::from_slice(&bytes).map_err(|error| {
+                        GraphError::Io(format!(
+                            "decode persisted audio graph `{}`: {error}",
+                            path.display()
+                        ))
+                    })?;
+                if state.schema_version > GRAPH_STATE_SCHEMA {
+                    return Err(GraphError::FutureSchema {
+                        found: state.schema_version,
+                        current: GRAPH_STATE_SCHEMA,
+                    });
+                }
+                state.spec
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => initial,
+            Err(error) => {
+                return Err(GraphError::Io(format!(
+                    "read persisted audio graph `{}`: {error}",
+                    path.display()
+                )));
+            }
+        };
+        let mut manager = Self::new(spec)?;
+        manager.persist_path = Some(path);
+        manager.persist()?;
+        Ok(manager)
+    }
+
+    /// 原子持久化当前图：同目录临时文件 + `sync_all` + rename；
+    /// 失败不影响内存图。
+    fn persist(&self) -> Result<(), GraphError> {
+        let Some(path) = &self.persist_path else {
+            return Ok(());
+        };
+        let state = PersistedGraphStateV1 {
+            schema_version: GRAPH_STATE_SCHEMA,
+            spec: self.active_graph().spec.clone(),
+        };
+        let bytes = serde_json::to_vec(&state)
+            .map_err(|error| GraphError::Io(format!("encode persisted audio graph: {error}")))?;
+        let temporary = path.with_extension("json.tmp");
+        {
+            use std::io::Write;
+            let mut file = std::fs::File::create(&temporary).map_err(|error| {
+                GraphError::Io(format!(
+                    "create temporary graph state `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+            file.write_all(&bytes).map_err(|error| {
+                GraphError::Io(format!(
+                    "write temporary graph state `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+            file.sync_all().map_err(|error| {
+                GraphError::Io(format!(
+                    "sync temporary graph state `{}`: {error}",
+                    temporary.display()
+                ))
+            })?;
+        }
+        std::fs::rename(&temporary, path).map_err(|error| {
+            GraphError::Io(format!("commit graph state `{}`: {error}", path.display()))
+        })?;
+        Ok(())
     }
 
     pub fn validate_and_compile(
@@ -570,13 +663,20 @@ impl<const PARAMETER_CAPACITY: usize> AudioGraphManager<PARAMETER_CAPACITY> {
         self.compiler.compile(candidate)
     }
 
-    /// 只提交已经完整 prepare 的不可变计划。失败候选永远不会修改活动图。
-    pub fn commit(&self, candidate: Arc<CompiledGraph>) {
+    /// 只提交已经完整 prepare 的不可变计划，并原子持久化；
+    /// 持久化失败时回滚内存图到旧图（迁移失败回滚）。
+    pub fn commit(&self, candidate: Arc<CompiledGraph>) -> Result<(), GraphError> {
         let old = self.active.swap(candidate);
         self.rollback
             .lock()
             .expect("rollback lock poisoned")
-            .push(old);
+            .push(old.clone());
+        if let Err(error) = self.persist() {
+            self.active.swap(old);
+            self.rollback.lock().expect("rollback lock poisoned").pop();
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn rollback(&self) -> Result<Arc<CompiledGraph>, GraphError> {
@@ -591,6 +691,7 @@ impl<const PARAMETER_CAPACITY: usize> AudioGraphManager<PARAMETER_CAPACITY> {
             .lock()
             .expect("rollback lock poisoned")
             .push(replaced);
+        self.persist()?;
         Ok(previous)
     }
 
@@ -1011,9 +1112,84 @@ mod tests {
         let mut next = graph();
         next.version = 2;
         let candidate = manager.validate_and_compile(next).unwrap();
-        manager.commit(candidate);
+        manager.commit(candidate).unwrap();
         assert_eq!(manager.active_graph().spec.version, 2);
         manager.rollback().unwrap();
+        assert_eq!(manager.active_graph().spec.version, 1);
+    }
+
+    #[test]
+    fn persisted_graph_state_restores_across_instances() {
+        // AGR-013：图状态持久化 + 重启恢复。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audio-graph.json");
+
+        let manager = AudioGraphManager::<8>::open(&path, graph()).unwrap();
+        assert_eq!(manager.active_graph().spec.version, 1);
+        assert!(path.exists(), "first open must persist the graph");
+
+        let mut next = graph();
+        next.version = 2;
+        next.graph_id = "persisted".into();
+        let candidate = manager.validate_and_compile(next).unwrap();
+        manager.commit(candidate).unwrap();
+        drop(manager);
+
+        let restored = AudioGraphManager::<8>::open(&path, graph()).unwrap();
+        assert_eq!(restored.active_graph().spec.version, 2);
+        assert_eq!(restored.active_graph().spec.graph_id, "persisted");
+    }
+
+    #[test]
+    fn future_schema_and_corrupt_graph_state_are_rejected_without_overwrite() {
+        // AGR-013：降级保护与损坏保护——拒绝且保留原文件。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("audio-graph.json");
+
+        let future = serde_json::json!({"schema_version": 99, "spec": graph()}).to_string();
+        std::fs::write(&path, &future).unwrap();
+        let error = match AudioGraphManager::<8>::open(&path, graph()) {
+            Ok(_) => panic!("future schema must be rejected"),
+            Err(error) => error,
+        };
+        assert!(
+            matches!(
+                error,
+                GraphError::FutureSchema {
+                    found: 99,
+                    current: 1
+                }
+            ),
+            "{error}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), future);
+
+        std::fs::write(&path, b"{not json").unwrap();
+        let error = match AudioGraphManager::<8>::open(&path, graph()) {
+            Ok(_) => panic!("corrupt state must be rejected"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, GraphError::Io(_)), "{error}");
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
+    }
+
+    #[test]
+    fn commit_persist_failure_rolls_back_memory_graph() {
+        // AGR-013：迁移失败回滚——持久化失败时活动图保持旧图。
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("graph.json");
+        let manager = AudioGraphManager::<8>::open(&path, graph()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+
+        let mut next = graph();
+        next.version = 2;
+        let candidate = manager.validate_and_compile(next).unwrap();
+        let error = match manager.commit(candidate) {
+            Ok(()) => panic!("commit must fail when persistence fails"),
+            Err(error) => error,
+        };
+        assert!(matches!(error, GraphError::Io(_)), "{error}");
         assert_eq!(manager.active_graph().spec.version, 1);
     }
 
