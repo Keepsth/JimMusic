@@ -9,7 +9,7 @@
 | Rust format | 通过 | workspace |
 | Rust Clippy `-D warnings` | 通过 | workspace、all targets、all features |
 | Rust FFI artifact build | 通过 | 先构建 workspace `cdylib` 再运行 ABI 测试；拒绝旧增量动态库掩盖当前符号表 |
-| Rust tests | 通过（240） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引与离线刷新队列，workspace/all targets/all features |
+| Rust tests | 通过（242） | 单元、动态库 FFI、本地 HTTP/CAS/加密/P2P 集成、传输流端点、网络类别与蜂窝额度、策略撤销自动停用与防回滚、收藏协助 Pin、发布者关注、策略本地覆盖、发布者全文索引、离线刷新队列与安装日志，workspace/all targets/all features |
 | 原生 FFI/节点 | 通过 | ALSA/null/Web Output ABI、打开会话证据、应用内节点启动/前后台/停止/同进程重开与稳定 PeerId；stop 等待仓库锁释放，重启门禁连续 8 次通过 |
 | Rust TLS 依赖边界 | 通过 | workspace 依赖树不含 `native-tls` 或 `openssl-sys` |
 | Flutter analyze | 通过（0 issue） | 当前 Linux SDK |
@@ -36,8 +36,9 @@
 | 发布者全文索引 | 通过 | 曲库索引增加发布者身份 CID（Manifest 导入记录），标题/艺人/专辑/标签/发布者统一匹配；Flutter 同步映射并纳入列表搜索；服务 1 项 + Flutter 1 项测试 |
 | 离线刷新队列 | 通过 | 网络不可用时社区源刷新进入持久队列（503 + retryable 显式告知），恢复后自动排空；社区页展示排队与立即重试；API 1 项 + Flutter 1 项测试 |
 | 播放模式（P1） | 通过 | 顺序/列表循环/单曲循环/随机（just_audio LoopMode + 桥边界决策：单曲循环回拉当前曲目、顺序模式绕回队首即停止）；播放页模式按钮；5 项测试 |
+| 插件安装日志 | 通过 | 安装中间态（downloading/verifying/staging/committing）持久化，失败保留结构化错误、中断重启标记 interrupted；插件页展示；生命周期测试 2 项 |
 | GitHub Actions lint | 通过 | `actionlint` 1.7.7，含最终 HarmonyOS 验签步骤 |
-| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 76、部分实现 46、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
+| P0 追踪完整性 | 通过 | 134/134 已映射：本机通过 77、部分实现 45、缺失 0、待外证 12；“无缺失”不等于已满足跨平台 DoD |
 
 ## CI 候选门禁
 

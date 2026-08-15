@@ -102,6 +102,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/search", get(search))
         .route("/plugins", get(list_plugins))
+        .route("/plugins/install-journal", get(list_install_journal))
         .route("/plugins/install", post(install_plugin))
         .route("/plugins/{id}", get(get_plugin).delete(uninstall_plugin))
         .route("/plugins/{id}/enable", post(enable_plugin))
@@ -2300,6 +2301,12 @@ async fn search(
     }))
 }
 
+async fn list_install_journal(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<crate::lifecycle::InstallJournalEntryV1>> {
+    Json(state.lifecycle.install_journal())
+}
+
 async fn list_plugins(State(state): State<Arc<AppState>>) -> Json<Vec<crate::PluginRuntimeRecord>> {
     Json(state.lifecycle.list())
 }
@@ -2362,7 +2369,25 @@ async fn install_plugin(
     let location = request
         .artifact_location
         .unwrap_or_else(|| format!("ipfs://{}", artifact.artifact_cid));
-    let bytes = download_artifact(&state, &location, artifact.byte_length).await?;
+    // PLG-013：下载阶段持久可观测。
+    let request_id_for_journal = install_context.request_id.clone();
+    state
+        .lifecycle
+        .journal_begin(
+            &request_id_for_journal,
+            &request.manifest.plugin_id,
+            &request.manifest.version,
+        )
+        .map_err(|error| ApiError::bad_request("plugin", "install_journal", error))?;
+    let bytes = match download_artifact(&state, &location, artifact.byte_length).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            let _ = state
+                .lifecycle
+                .journal_fail(&request_id_for_journal, &error.body.message);
+            return Err(error);
+        }
+    };
     let outcome = state
         .lifecycle
         .install(request.manifest, &bytes, install_context)

@@ -1786,12 +1786,39 @@ class _PluginsTab extends StatelessWidget {
         icon: const Icon(Icons.extension),
         label: const Text('安装签名插件'),
       ),
-      body: control.plugins.isEmpty
+      body: control.plugins.isEmpty && control.installJournal.isEmpty
           ? const Center(child: Text('暂无已安装插件'))
           : ListView.builder(
               padding: const EdgeInsets.only(bottom: 88),
-              itemCount: control.plugins.length,
+              itemCount: control.plugins.length + control.installJournal.length,
               itemBuilder: (context, index) {
+                if (index >= control.plugins.length) {
+                  // PLG-013：安装中间态日志（下载/验证/暂存/提交/失败/中断）。
+                  final entry =
+                      control.installJournal[index - control.plugins.length];
+                  final stage = '${entry['stage'] ?? 'unknown'}';
+                  return Card(
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      leading: Icon(
+                        stage == 'failed' || stage == 'interrupted'
+                            ? Icons.error_outline
+                            : Icons.downloading,
+                      ),
+                      title: Text(
+                        '安装日志 · ${entry['plugin_id'] ?? '-'} '
+                        '${entry['version'] ?? ''}',
+                      ),
+                      subtitle: Text(
+                        '$stage'
+                        '${entry['error'] == null ? '' : ' · ${entry['error']}'}',
+                      ),
+                    ),
+                  );
+                }
                 final plugin = control.plugins[index];
                 final id = '${plugin['plugin_id']}';
                 final state = '${plugin['lifecycle_state']}';

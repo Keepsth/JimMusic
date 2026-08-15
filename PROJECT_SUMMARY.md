@@ -69,7 +69,7 @@
 
 最终结果记录在 `docs/RELEASE_ACCEPTANCE.md`。最终一轮已经观察到：
 
-- Rust format、Clippy（all targets/all features，`-D warnings`）和 240 项完整测试通过；FFI 门禁先
+- Rust format、Clippy（all targets/all features，`-D warnings`）和 242 项完整测试通过；FFI 门禁先
   构建真实 `cdylib`，再验证 Output/Host/Node 符号与行为，避免旧增量产物或静默跳过；
   节点 stop 等待 rust-ipfs 仓库锁释放，同进程重启门禁稳定通过；
 - Flutter analyze 零问题，61 项测试通过（含 Rust 音频/节点 FFI、控制面 SSE 流、
@@ -106,6 +106,8 @@
 - 播放模式（PLR-102，P1）：顺序/列表循环/单曲循环/随机——just_audio LoopMode/Shuffle
   与桥边界决策（单曲循环回拉当前曲目、顺序模式绕回队首即停止、随机先洗牌再入队），
   播放页模式按钮，模式持久化；
+- 插件安装日志（PLG-013）：安装中间态（下载/验证/暂存/提交）持久化，失败保留结构化
+  错误、崩溃中断重启标记 interrupted（≤64 条滚动），插件页展示；
 - 错误本地化（API-004）：Flutter 统一把稳定错误信封映射为本地化文案、重试建议与网络
   恢复提示，控制台横幅与传输错误行统一消费；
 - Flutter 控制中心已消费 `/v1/events` SSE：sequence 缺口与 `snapshot.required` 触发整体快照

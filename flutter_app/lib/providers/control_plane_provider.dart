@@ -34,6 +34,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> _moderationReports = [];
   List<Map<String, dynamic>> _follows = [];
   List<Map<String, dynamic>> _refreshQueue = [];
+  List<Map<String, dynamic>> _installJournal = [];
   List<Map<String, dynamic>> _pins = [];
   Object? _lastResult;
   StreamSubscription<SseEvent>? _eventSub;
@@ -87,6 +88,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get moderationReports => _moderationReports;
   List<Map<String, dynamic>> get follows => _follows;
   List<Map<String, dynamic>> get refreshQueue => _refreshQueue;
+  List<Map<String, dynamic>> get installJournal => _installJournal;
   LibrarySyncReport? get librarySyncReport => _librarySyncReport;
 
   LibrarySyncReport? _librarySyncReport;
@@ -155,6 +157,7 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     '/community-sources',
     '/community-sources/follows',
     '/community-sources/refresh-queue',
+    '/plugins/install-journal',
     '/moderation-reports',
     '/audio/path',
     '/audio/stats',
@@ -212,6 +215,8 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
         _follows = _list(value);
       case '/community-sources/refresh-queue':
         _refreshQueue = _list(value);
+      case '/plugins/install-journal':
+        _installJournal = _list(value);
       case '/moderation-reports':
         _moderationReports = _list(value);
       case '/audio/path':

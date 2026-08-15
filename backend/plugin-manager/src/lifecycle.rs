@@ -81,6 +81,22 @@ struct PluginRepositoryState {
     service_owners: BTreeMap<String, String>,
     safe_mode: bool,
     audit: Vec<PluginAuditEvent>,
+    #[serde(default)]
+    install_journal: BTreeMap<String, InstallJournalEntryV1>,
+}
+
+/// 插件安装中间态日志（PLG-013）：下载/验证/暂存/提交等阶段持久可观测，
+/// 崩溃中断的安装重启后标记为 interrupted。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct InstallJournalEntryV1 {
+    pub schema_version: u16,
+    pub request_id: String,
+    pub plugin_id: String,
+    pub version: String,
+    pub stage: String,
+    pub started_at: i64,
+    pub updated_at: i64,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -187,8 +203,22 @@ impl PluginLifecycleService {
                 service_owners: BTreeMap::new(),
                 safe_mode: false,
                 audit: Vec::new(),
+                install_journal: BTreeMap::new(),
             },
         )?;
+        // PLG-013：崩溃中断的安装标记为 interrupted（保留观测）。
+        store
+            .transact(|state| {
+                for entry in state.install_journal.values_mut() {
+                    if !matches!(entry.stage.as_str(), "failed" | "interrupted") {
+                        entry.stage = "interrupted".into();
+                        entry.error = Some("install interrupted by process exit".into());
+                        entry.updated_at = now();
+                    }
+                }
+                Ok(())
+            })
+            .map_err(std::io::Error::other)?;
         // 未完成 staging 从未成为活动版本，可安全清理普通文件/目录。
         for entry in std::fs::read_dir(&staging_dir)? {
             let path = entry?.path();
@@ -337,6 +367,88 @@ impl PluginLifecycleService {
         Ok((artifact, trust_channel))
     }
 
+    /// PLG-013：安装日志（中间态持久化）——开始一次安装。
+    pub fn journal_begin(
+        &self,
+        request_id: &str,
+        plugin_id: &str,
+        version: &str,
+    ) -> Result<(), PluginLifecycleError> {
+        let timestamp = now();
+        self.store.transact(|state| {
+            // 上限 64 条：丢弃最旧条目，避免无限增长。
+            if state.install_journal.len() >= 64 && !state.install_journal.contains_key(request_id)
+            {
+                if let Some(oldest) = state
+                    .install_journal
+                    .iter()
+                    .min_by_key(|(_, entry)| entry.updated_at)
+                    .map(|(key, _)| key.clone())
+                {
+                    state.install_journal.remove(&oldest);
+                }
+            }
+            state.install_journal.insert(
+                request_id.into(),
+                InstallJournalEntryV1 {
+                    schema_version: SCHEMA_V1,
+                    request_id: request_id.into(),
+                    plugin_id: plugin_id.into(),
+                    version: version.into(),
+                    stage: "downloading".into(),
+                    started_at: timestamp,
+                    updated_at: timestamp,
+                    error: None,
+                },
+            );
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// PLG-013：更新安装日志阶段。
+    pub fn journal_stage(&self, request_id: &str, stage: &str) -> Result<(), PluginLifecycleError> {
+        self.store.transact(|state| {
+            if let Some(entry) = state.install_journal.get_mut(request_id) {
+                entry.stage = stage.into();
+                entry.updated_at = now();
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// PLG-013：安装失败时记录结构化错误（条目保留供观测）。
+    pub fn journal_fail(&self, request_id: &str, error: &str) -> Result<(), PluginLifecycleError> {
+        self.store.transact(|state| {
+            if let Some(entry) = state.install_journal.get_mut(request_id) {
+                entry.stage = "failed".into();
+                entry.error = Some(error.chars().take(500).collect());
+                entry.updated_at = now();
+            }
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// PLG-013：安装成功，移除日志。
+    pub fn journal_finish(&self, request_id: &str) -> Result<(), PluginLifecycleError> {
+        self.store.transact(|state| {
+            state.install_journal.remove(request_id);
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    /// PLG-013：当前安装日志（下载/验证/暂存/提交/失败/中断）。
+    pub fn install_journal(&self) -> Vec<InstallJournalEntryV1> {
+        self.store
+            .snapshot()
+            .install_journal
+            .into_values()
+            .collect()
+    }
+
     /// 完整安装事务：兼容性预判 → Manifest 验签 → 权限判定 → 制品 CID/摘要校验 →
     /// staging fsync → 原子激活。任何失败都保留旧活动版本。
     pub fn install(
@@ -360,7 +472,28 @@ impl PluginLifecycleService {
                 });
             }
         }
+        // PLG-013：安装日志（verifying → staging → committing），失败保留观测。
+        let request_id = context.request_id.clone();
+        self.journal_begin(&request_id, &manifest.plugin_id, &manifest.version)?;
+        self.journal_stage(&request_id, "verifying")?;
+        let result = self.install_inner(manifest, artifact_bytes, context);
+        match &result {
+            Ok(_) => {
+                let _ = self.journal_finish(&request_id);
+            }
+            Err(error) => {
+                let _ = self.journal_fail(&request_id, &error.to_string());
+            }
+        }
+        result
+    }
 
+    fn install_inner(
+        &self,
+        manifest: PluginManifestV1,
+        artifact_bytes: &[u8],
+        context: InstallContext,
+    ) -> Result<PluginInstallOutcome, PluginLifecycleError> {
         let (artifact, trust_channel) = self.preflight(&manifest, &context)?;
         let manifest_cid = jimmusic_protocol::cid_v1_for(&manifest)
             .map_err(|error| PluginLifecycleError::InvalidManifest(error.to_string()))?;
@@ -377,6 +510,7 @@ impl PluginLifecycleService {
             return Err(PluginLifecycleError::CidMismatch);
         }
 
+        let _ = self.journal_stage(&context.request_id, "staging");
         let stage = self.staging_dir.join(safe_component(&context.request_id));
         if stage.exists() {
             std::fs::remove_dir_all(&stage)?;
@@ -419,6 +553,7 @@ impl PluginLifecycleService {
             installed_at: timestamp,
         };
 
+        let _ = self.journal_stage(&context.request_id, "committing");
         let transaction = self.store.transact(|state| {
             let existing = state.plugins.get(&manifest.plugin_id).cloned();
             let mut versions = existing
@@ -961,6 +1096,61 @@ mod tests {
             granted_permissions: BTreeSet::from([PluginPermission::AudioDevice]),
             allow_community_native: false,
         }
+    }
+
+    #[test]
+    fn install_journal_persists_failure_and_success_clears() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = PluginLifecycleService::open(dir.path()).unwrap();
+        service
+            .add_official_publisher("org.example".into())
+            .unwrap();
+        let key = SigningKey::from_bytes(&[1; 32]);
+
+        // 摘要被破坏（重新签名保证签名有效）：安装失败，日志保留 failed + 结构化错误。
+        let mut manifest = signed_manifest(&key, b"v1", "1.0.0");
+        manifest.artifacts[0].sha256 = "11".repeat(32);
+        manifest.signature = Some(hex::encode(
+            key.sign(&manifest.unsigned_bytes().unwrap()).to_bytes(),
+        ));
+        assert!(service
+            .install(manifest, b"v1", context(&key, "req-fail"))
+            .is_err());
+        let journal = service.install_journal();
+        assert_eq!(journal.len(), 1);
+        assert_eq!(journal[0].stage, "failed");
+        let error_text = journal[0].error.clone().unwrap_or_default();
+        assert!(
+            error_text.to_lowercase().contains("digest"),
+            "unexpected journal error: {error_text:?}"
+        );
+
+        // 成功安装只清自己的日志；失败条目保留供观测（PLG-013）。
+        service
+            .install(
+                signed_manifest(&key, b"v2", "2.0.0"),
+                b"v2",
+                context(&key, "req-ok"),
+            )
+            .unwrap();
+        let journal = service.install_journal();
+        assert_eq!(journal.len(), 1);
+        assert_eq!(journal[0].request_id, "req-fail");
+    }
+
+    #[test]
+    fn interrupted_install_is_marked_on_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let service = PluginLifecycleService::open(dir.path()).unwrap();
+        service
+            .journal_begin("req-crash", "org.example.crash", "9.9.9")
+            .unwrap();
+        drop(service);
+        let reopened = PluginLifecycleService::open(dir.path()).unwrap();
+        let journal = reopened.install_journal();
+        assert_eq!(journal.len(), 1);
+        assert_eq!(journal[0].stage, "interrupted");
+        assert_eq!(journal[0].plugin_id, "org.example.crash");
     }
 
     #[test]
