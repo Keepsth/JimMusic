@@ -42,10 +42,10 @@ dependencies:
   shared_preferences: ^2.3.2
 
   # 本地音频扫描/导入
-  file_picker: ^8.1.2
+  file_picker: ^12.0.0
 
   # 真实音频播放
-  just_audio: ^0.9.46
+  just_audio: ^0.10.6
 
   # dart:ffi 辅助（C 字符串、内存分配、回调），用于 Rust 宿主桥
   ffi: ^2.1.0
@@ -71,7 +71,7 @@ dev_dependencies:
   # activated in the `analysis_options.yaml` file located at the root of your
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
-  flutter_lints: ^5.0.0
+  flutter_lints: ^6.0.0
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

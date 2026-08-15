@@ -15,22 +15,20 @@ class MediaScannerService {
   /// 支持多选（MP3/AAC/FLAC/WAV/OGG/M4A）。
   /// 用户取消时返回空列表。
   static Future<List<Music>> pickAudioFiles() async {
-    final result = await FilePicker.platform.pickFiles(
+    // file_picker 12：静态入口直接返回 List<PlatformFile>，取消返回空列表；
+    // Web 端默认携带字节内容（withData 默认 kIsWeb）。
+    final files = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['mp3', 'aac', 'flac', 'wav', 'ogg', 'm4a'],
-      allowMultiple: true,
-      // Web 端需要字节内容（无文件路径）；桌面/移动端一并返回也无妨。
-      withData: true,
     );
-    if (result == null) return [];
 
     final tracks = <Music>[];
-    for (var i = 0; i < result.files.length; i++) {
-      final file = result.files[i];
+    for (var i = 0; i < files.length; i++) {
+      final file = files[i];
       if (kIsWeb) {
-        // Web：绝不访问 file.path（会抛异常），只用 bytes + name。
-        final bytes = file.bytes;
-        if (bytes != null && bytes.isNotEmpty) {
+        // Web：绝不访问 file.path（会抛异常），用 readAsBytes() 读取内容。
+        final bytes = await file.readAsBytes();
+        if (bytes.isNotEmpty) {
           tracks.add(
             Music.fromBytes(
               name: file.name,

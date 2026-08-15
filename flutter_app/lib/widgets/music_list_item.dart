@@ -119,7 +119,7 @@ class MusicListItem extends StatelessWidget {
                 Icon(Icons.cloud_off_outlined, color: scheme.error, size: 18),
               if (isPlaying)
                 Icon(Icons.play_arrow, color: scheme.primary, size: 18),
-              if (trailingExtra != null) trailingExtra!,
+              ?trailingExtra,
             ],
           ),
           onTap: music.availability == TrackAvailability.available

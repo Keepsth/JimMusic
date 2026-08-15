@@ -899,13 +899,12 @@ class MusicPlayerProvider extends ChangeNotifier {
         }
       }),
     );
+    // just_audio 0.10 起平台错误以 errorCode 事件形式进入 errorStream
+    // （流错误不再转发），统一在此映射为结构化播放失败。
     _audioSubs.add(
-      audio.playbackEventStream.listen(
-        (_) {},
-        onError: (Object error, StackTrace stackTrace) {
-          _failPlayback('音频输出错误：$error');
-        },
-      ),
+      audio.errorStream.listen((error) {
+        _failPlayback('音频输出错误：${error.code} ${error.message}');
+      }),
     );
     await audio.setVolume(_muted ? 0.0 : _volume);
     await _applyPlaybackModeToAudio();
