@@ -8,6 +8,7 @@ import '../providers/audio_output_provider.dart';
 import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
 import '../services/control_api_types.dart' show networkPauseHint;
+import '../widgets/community_native_confirm.dart';
 import '../widgets/plugin_config_form.dart';
 import '../widgets/publish_wizard.dart';
 
@@ -2026,6 +2027,10 @@ class _PluginsTab extends StatelessWidget {
                       '$state · ${plugin['active_version'] ?? '-'} · ${plugin['trust_channel']}',
                     ),
                     children: [
+                      // PLG-007：社区原生插件的持续警告。
+                      if (plugin['trust_channel'] ==
+                          'community_native_advanced')
+                        const CommunityNativeWarningTile(),
                       ListTile(
                         title: const Text('权限'),
                         subtitle: Text(
@@ -2381,6 +2386,15 @@ class _PluginsTab extends StatelessWidget {
       ),
     );
     if (accepted == true) {
+      // PLG-007：社区原生高级授权需要二次确认与持续警告。
+      if (allowNative) {
+        if (!context.mounted) return;
+        final confirmed = await confirmCommunityNative(
+          context,
+          pluginName: '${manifest['name'] ?? '未知插件'}',
+        );
+        if (!confirmed) return;
+      }
       await control.installPlugin(
         manifest,
         publicKey.text,

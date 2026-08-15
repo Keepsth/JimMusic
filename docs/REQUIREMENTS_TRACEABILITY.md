@@ -62,7 +62,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-004 | 本机通过 | staging、fsync、原子版本目录/状态提交、旧版本保留、启动清孤儿 | 断电故障注入仅有逻辑/文件级测试 |
 | PLG-005 | 本机通过 | v1 API/UI 支持安装、启停、配置、回滚、卸载，状态持久化；社区插件目录：`GET /v1/plugins/catalog`（`q` 搜索 CID/分类/标签/注解）与 `/catalog/{cid}` 详情（Manifest JSON/DAG-CBOR 双编码解析，返回 artifact_available/installed_state/active_version/update_available/revoked）；目录页浏览/搜索/详情/安装（公钥与权限确认）；API 测试 1 项 | 七端交互待验收 |
 | PLG-006 | 本机通过 | 权限声明/授权/撤销持久化；Wasmtime Host 使用 owner-scoped 不透明句柄并即时撤销；越权测试 | 七端 UI 与运行时集成证据待 RC |
-| PLG-007 | 部分实现 | 官方原生、社区沙箱、社区原生高级通道与审计 | 桌面二次确认/持续警告 E2E 不完整 |
+| PLG-007 | 本机通过 | 官方原生、社区沙箱、社区原生高级通道与审计；社区原生默认拒绝（后端 CommunityNativeDenied），高级授权安装前二次确认（持续警告文案）且插件列表永久标记警告条目；后端安装/撤销 E2E 测试 + Flutter 4 项测试 | 七端交互待验收 |
 | PLG-008 | 本机通过 | service owner 注册冲突与微内核保留服务拒绝测试 | 尚无跨进程 service host |
 | PLG-009 | 本机通过 | revoked manifest 在 preflight 被拒绝，可停用/隔离；社区 Policy Revoke 事件在摄取与刷新后自动应用：`active_revoke_targets` 收集生效（未过期、来源启用）目标，`revoke_release` 按 manifest CID 匹配已安装版本并置 Revoked + 推送 `plugin.state_changed`，幂等；API 测试 | 撤销 Feed 快照防回滚与七端交互待验收 |
 | PLG-010 | 本机通过 | 连续失败、quarantine/safe mode；Wasmtime fuel、内存/表限制和 trap 测试 | 社区原生插件仍需独立进程超时探针 |
@@ -148,7 +148,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | SEC-002 | 本机通过 | Argon2id + XChaCha20-Poly1305，错误口令/篡改/roundtrip 测试 | KDF 参数迁移测试待补 |
 | SEC-003 | 本机通过 | v1 插件签名强制，错误/缺失签名拒绝；测试 | legacy API 仍保留只读/410 兼容壳 |
 | SEC-004 | 部分实现 | Wasmtime 47 默认无 WASI/环境 import；fuel、内存/表上限、owner-scoped capability handle、猜测/撤销/网络与文件越权负向测试；生命周期/API 已接 supervisor | Web/iOS/HarmonyOS 插件执行载体和七端恶意样本外证待补 |
-| SEC-005 | 部分实现 | 社区原生默认拒绝、高级授权通道、审计、安全模式 | 原生插件仍未独立进程隔离，二次确认 E2E 不完整 |
+| SEC-005 | 部分实现 | 社区原生默认拒绝、高级授权二次确认与持续警告、审计、安全模式 | 原生插件仍未独立进程隔离（七端） |
 | SEC-006 | 本机通过 | 默认 `127.0.0.1`、随机 256-bit token 0600、所有路由鉴权；测试 | 远程 TLS 需受控反向代理，发布环境测试待补 |
 | SEC-007 | 本机通过 | CAS/网关/Bitswap 块 CID、Manifest/Feed/插件签名及重放回滚检查；篡改和错误 CID 负向测试 | 七端恶意 peer 压力验收待 RC |
 | SEC-008 | 本机通过 | 许可证/权利、内容标签、发布者签名 Validate；发布测试 | UI 向导仍允许高级 JSON 编辑 |
