@@ -98,7 +98,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | ID | 状态 | 实现/证据入口 | 未闭环项 |
 |---|---|---|---|
 | DST-001 | 本机通过 | 版本化音乐 DTO、严格 canonical DAG-CBOR、CIDv1、签名测试 | 跨语言/七端 golden vectors 待补 |
-| DST-002 | 部分实现 | Manifest 支持多个 rendition、original/lossless/codec 元数据 | 发布 UI 不会生成兼容 rendition |
+| DST-002 | 本机通过 | Manifest 支持多个 rendition、original/lossless/codec 元数据；发布向导多 rendition 编辑（UI-004）；客户端按平台能力（Web 容器/编解码白名单）、质量（lossless/original 优先）与网络策略（计量网络偏好有损流式小体积）选择 rendition；Flutter 选择器 7 项测试 | 七端实测待补 |
 | DST-003 | 部分实现 | 校验、CID、签名、Pin、Feed、receipt 同节点事务；发布块同步到内置 P2P 仓库并可由 Helia 取回 | 另一节点从 Feed 解析到播放器的 UI 闭环待补 |
 | DST-004 | 本机通过 | Ed25519 身份生成、Argon2id+XChaCha20 加密导出/导入/轮换/撤销；负向测试/UI | 系统钥匙串集成未实现 |
 | DST-005 | 本机通过 | publish/update/tombstone 序列、previous CID、签名、防重放；测试 | 远端 Feed 分叉协调策略待 P2P |

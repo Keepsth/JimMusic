@@ -99,6 +99,7 @@ Music? musicFromLibraryTrack(Map<String, dynamic> track) {
     policySourceIds: (policy?['source_ids'] as List<dynamic>? ?? const [])
         .whereType<String>()
         .toList(growable: false),
+    renditionSources: sources,
     isFavorite: track['favorite'] == true,
   );
 }

@@ -343,9 +343,7 @@ class MusicPlayerProvider extends ChangeNotifier {
     final resolvedQueue = queueIds.map(_findTrack).whereType<Music>().toList();
     if (resolvedQueue.isEmpty) return false;
     _playlist = resolvedQueue;
-    final current = currentTrackId == null
-        ? null
-        : _findTrack(currentTrackId);
+    final current = currentTrackId == null ? null : _findTrack(currentTrackId);
     _currentMusic = current ?? resolvedQueue.first;
     final restoredIndex = _playlist.indexWhere(
       (track) => track.id == _currentMusic!.id,
@@ -493,8 +491,9 @@ class MusicPlayerProvider extends ChangeNotifier {
     Music music, {
     required String endpoint,
     String token = '',
+    String? contentCid,
   }) async {
-    final cid = music.renditionCid ?? music.manifestCid;
+    final cid = contentCid ?? music.renditionCid ?? music.manifestCid;
     if (cid == null || cid.isEmpty) {
       _failPlayback('网络曲目缺少内容 CID');
       return;

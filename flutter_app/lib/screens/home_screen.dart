@@ -1,8 +1,10 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/control_plane_provider.dart';
 import '../providers/music_player_provider.dart';
+import '../services/rendition_selector.dart';
 import '../widgets/music_list_item.dart';
 import '../widgets/now_playing_bar.dart';
 import '../widgets/policy_gate.dart';
@@ -180,12 +182,24 @@ class LibraryTab extends StatelessWidget {
                               music.filePath!.isNotEmpty;
                           final hasCid =
                               music.renditionCid != null ||
-                              music.manifestCid != null;
+                              music.manifestCid != null ||
+                              music.renditionSources.isNotEmpty;
                           if (!hasLocalPath && hasCid && control.connected) {
+                            // DST-002：按平台能力/质量/网络策略选择 rendition。
+                            final config = control.nodeConfig;
+                            final preferCompact =
+                                config?['metered'] == true ||
+                                config?['network_class'] == 'cellular';
+                            final selected = selectBestRenditionCid(
+                              music.renditionSources,
+                              isWeb: kIsWeb,
+                              preferCompact: preferCompact,
+                            );
                             await player.playNetworkTrack(
                               music,
                               endpoint: control.endpoint,
                               token: control.token,
+                              contentCid: selected,
                             );
                           } else {
                             await player.play(music);

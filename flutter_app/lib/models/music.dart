@@ -32,6 +32,9 @@ class Music {
   final String? policyReason;
   final List<String> policySourceIds;
 
+  /// DST-002：后端返回的全部 rendition 源（客户端按能力/质量/网络策略选择）。
+  final List<Map<String, dynamic>> renditionSources;
+
   /// 内存中的音频数据（Web 端导入时无文件路径，直接持有字节供播放）。
   final Uint8List? audioBytes;
 
@@ -66,6 +69,7 @@ class Music {
     this.policyAction,
     this.policyReason,
     this.policySourceIds = const [],
+    this.renditionSources = const [],
     this.audioBytes,
     this.mimeType,
     this.isFavorite = false,
@@ -95,6 +99,7 @@ class Music {
     String? policyAction,
     String? policyReason,
     List<String>? policySourceIds,
+    List<Map<String, dynamic>>? renditionSources,
     Uint8List? audioBytes,
     String? mimeType,
     bool? isFavorite,
@@ -122,6 +127,7 @@ class Music {
       policyAction: policyAction ?? this.policyAction,
       policyReason: policyReason ?? this.policyReason,
       policySourceIds: policySourceIds ?? this.policySourceIds,
+      renditionSources: renditionSources ?? this.renditionSources,
       audioBytes: audioBytes ?? this.audioBytes,
       mimeType: mimeType ?? this.mimeType,
       isFavorite: isFavorite ?? this.isFavorite,
@@ -151,6 +157,7 @@ class Music {
     'policyAction': policyAction,
     'policyReason': policyReason,
     'policySourceIds': policySourceIds,
+    'renditionSources': renditionSources,
     'isFavorite': isFavorite,
     'lyrics': lyrics,
   };
@@ -198,6 +205,9 @@ class Music {
       policyReason: map['policyReason'] as String?,
       policySourceIds: (map['policySourceIds'] as List<dynamic>? ?? const [])
           .whereType<String>()
+          .toList(growable: false),
+      renditionSources: (map['renditionSources'] as List<dynamic>? ?? const [])
+          .whereType<Map<String, dynamic>>()
           .toList(growable: false),
       isFavorite: map['isFavorite'] as bool? ?? false,
       lyrics: map['lyrics'] as String?,

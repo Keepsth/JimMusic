@@ -102,6 +102,9 @@ void main() {
       expect(music.renditionCid, 'bafyr');
       expect(music.availability, TrackAvailability.remote);
       expect(music.isFavorite, isTrue);
+      // DST-002：全部 rendition 源随曲目映射，供客户端选择。
+      expect(music.renditionSources, hasLength(1));
+      expect(music.renditionSources.single['content_cid'], 'bafyr');
     });
 
     test('发布者身份 CID 随曲目映射（COM-005）', () {
