@@ -69,7 +69,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | PLG-011 | 部分实现 | JSON Schema 子集验证与持久配置；UI 可编辑 JSON | 敏感字段控件和完整迁移策略未实现 |
 | PLG-012 | 本机通过 | platform/arch/core ABI/依赖/冲突/权限在下载前 preflight | 七端目录数据待实际验证 |
 | PLG-013 | 本机通过 | lifecycle state、错误、版本、信任、权限可观测；安装日志持久化中间态（downloading/verifying/staging/committing），失败保留结构化错误、崩溃中断重启标记 interrupted（≤64 条滚动），`GET /v1/plugins/install-journal` 与插件页展示；生命周期测试 2 项 | 七端交互与日志展示待验收 |
-| PLG-014 | 部分实现 | 配置 UI 只使用 Host Flutter 组件且不注入路由/脚本 | 尚未按声明式 Schema 渲染全部控件 |
+| PLG-014 | 本机通过 | 配置 UI 只使用 Host Flutter 组件且不注入路由/脚本；`GET /v1/plugins/{id}/schema` 从内容寻址仓库解析 Schema（JSON 或 DAG-CBOR 双编码，并修复 set_config 的同一潜在不一致）；Flutter 按 Schema 渲染开关/枚举下拉/数值滑杆/文本框（默认值计算），Schema 不可解析时回退 JSON 编辑；API 测试 1 项 + Flutter 测试 3 项 | 仪表/预设控件与七端交互待验收 |
 
 ## Bit-perfect 与节点
 
