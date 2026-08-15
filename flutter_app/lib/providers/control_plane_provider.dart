@@ -613,6 +613,17 @@ class ControlPlaneProvider extends ChangeNotifier with WidgetsBindingObserver {
     (api) => api.delete('/policy/${Uri.encodeComponent(target)}/override'),
   );
 
+  /// SEC-009：对生效中的社区策略决策提交匿名申诉（本机核心代签）。
+  Future<void> appealPolicy(String target, String description) async {
+    final requestId = 'appeal-${DateTime.now().microsecondsSinceEpoch}';
+    await _mutate(
+      (api) => api.post('/policy/${Uri.encodeComponent(target)}/appeal', {
+        'request_id': requestId,
+        'description': description.trim(),
+      }),
+    );
+  }
+
   Future<void> unfollowPublisher(String identityCid) => _mutate(
     (api) => api.delete(
       '/community-sources/follows/${Uri.encodeComponent(identityCid)}',

@@ -100,6 +100,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             "/policy/{target}/override",
             post(override_policy).delete(clear_override),
         )
+        .route("/policy/{target}/appeal", post(appeal_policy))
         .route("/search", get(search))
         .route("/plugins", get(list_plugins))
         .route("/plugins/catalog", get(plugin_catalog))
@@ -2321,6 +2322,95 @@ async fn clear_override(
         decision: "community_restored".into(),
     });
     Ok(Json(serde_json::json!({"cleared": true})))
+}
+
+#[derive(Debug, Deserialize)]
+struct AppealPolicyRequest {
+    #[serde(default)]
+    request_id: Option<String>,
+    description: String,
+}
+
+/// SEC-009：对生效中的社区策略决策提交匿名申诉。
+/// 移动/浏览器客户端不持有 Ed25519 密钥，由本机可信核心生成一次性
+/// 不可关联密钥并代签，报告进入持久审核队列（若源发布了 X25519
+/// 公钥，交付时自动加密）。本地 block 没有远端接收方，直接拒绝。
+async fn appeal_policy(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Path(target): Path<String>,
+    Json(request): Json<AppealPolicyRequest>,
+) -> ApiResult<app_core::community_service::ModerationReportRecord> {
+    use ed25519_dalek::{Signer, SigningKey};
+    use getrandom::{rand_core::UnwrapErr, SysRng};
+
+    let request_id = request_id(&headers, request.request_id.as_deref())?;
+    let description = request.description.trim().to_string();
+    if description.is_empty() {
+        return Err(ApiError::bad_request(
+            "policy",
+            "appeal",
+            "description must not be empty",
+        ));
+    }
+    let decision = state.community.policy_decision(&target, now());
+    let Some(source_id) = decision
+        .action
+        .is_some()
+        .then(|| decision.source_ids.first().cloned())
+        .flatten()
+    else {
+        return Err(ApiError::not_found(
+            "policy",
+            "appeal",
+            "no active policy decision for target",
+        ));
+    };
+    if source_id == "local" {
+        return Err(ApiError::conflict(
+            "policy",
+            "appeal",
+            "local blocks are your own setting; remove them instead",
+        ));
+    }
+    let fingerprint =
+        crate::state::sha256_hex(&serde_json::to_vec(&(&target, &description)).unwrap_or_default());
+    let (record, _) = state
+        .idempotency
+        .execute("policy.appeal", &request_id, &fingerprint, || {
+            let mut csprng = UnwrapErr(SysRng);
+            let reporter = SigningKey::generate(&mut csprng);
+            let mut report = ModerationReportV1 {
+                schema_version: SCHEMA_V1,
+                report_id: format!("appeal-{request_id}"),
+                target: target.clone(),
+                reason_code: "appeal".into(),
+                description: description.clone(),
+                evidence_cids: Vec::new(),
+                reporter_identity: None,
+                reporter_public_key: hex::encode(reporter.verifying_key().to_bytes()),
+                anonymous: true,
+                recipient_source_id: source_id.clone(),
+                created_at: now(),
+                signature: None,
+                encrypted_envelope: None,
+            };
+            report.signature = Some(hex::encode(
+                reporter
+                    .sign(&report.unsigned_bytes().map_err(|error| error.to_string())?)
+                    .to_bytes(),
+            ));
+            state
+                .community
+                .queue_moderation_report(report, &state.node)
+                .map_err(|error| error.to_string())
+        })
+        .map_err(|error| map_idempotency("policy", "appeal", error))?;
+    state.events.publish(Event::CommunitySourceChanged {
+        source_id,
+        state: "moderation_report_queued".into(),
+    });
+    Ok(Json(record))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -4833,6 +4923,60 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(found["local"][0]["policy"]["action"], "block");
         assert_eq!(found["local"][0]["policy"]["target"], manifest_cid);
+
+        // SEC-009：对生效策略提交匿名申诉（本机核心代签，进入审核队列）。
+        let (status, appeal) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            &format!("/policy/{manifest_cid}/appeal"),
+            serde_json::json!({
+                "request_id": "appeal-1",
+                "description": "申诉：该作品为我本人原创",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{appeal}");
+        assert_eq!(appeal["report"]["reason_code"], "appeal");
+        assert_eq!(appeal["report"]["target"], manifest_cid);
+        assert_eq!(appeal["report"]["recipient_source_id"], "policy.example");
+        assert_eq!(appeal["report"]["anonymous"], true);
+        assert_eq!(appeal["status"], "queued");
+
+        // 本地 block 没有远端接收方，申诉被结构化拒绝。
+        state
+            .community
+            .set_local_block("bafy-local", Some("自己屏蔽".into()))
+            .unwrap();
+        let (status, local_appeal) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/policy/bafy-local/appeal",
+            serde_json::json!({
+                "request_id": "appeal-2",
+                "description": "不该被屏蔽",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert!(local_appeal["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("local blocks")));
+
+        // 无生效决策的目标 → 404。
+        let (status, missing) = call(
+            routes(),
+            state.clone(),
+            "POST",
+            "/policy/bafy-unknown/appeal",
+            serde_json::json!({
+                "request_id": "appeal-3",
+                "description": "无效申诉",
+            }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{missing}");
     }
 
     fn signed_policy_event(

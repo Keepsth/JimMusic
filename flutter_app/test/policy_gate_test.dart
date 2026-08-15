@@ -1,9 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_app/models/music.dart';
+import 'package:flutter_app/providers/control_plane_provider.dart';
 import 'package:flutter_app/providers/music_player_provider.dart';
+import 'package:flutter_app/services/control_api.dart';
 import 'package:flutter_app/widgets/policy_gate.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
+
+/// 记录申诉 mutation 的假控制面 API。
+class _AppealFakeApi extends ControlApi {
+  _AppealFakeApi() : super(endpoint: 'http://127.0.0.1:9/v1', token: 'test');
+
+  final List<(String, Object?)> posts = [];
+
+  @override
+  Future<dynamic> post(
+    String path, [
+    Object? body,
+    Map<String, String>? headers,
+  ]) async {
+    posts.add((path, body));
+    return {};
+  }
+}
 
 Music policyTrack(String id, {String? action, String? reason}) => Music(
   id: id,
@@ -179,5 +198,53 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('社区策略：阻止'), findsOneWidget);
     expect(find.text('本地覆盖'), findsNothing);
+  });
+
+  testWidgets('详情入口可提交匿名申诉（SEC-009）', (tester) async {
+    final api = _AppealFakeApi();
+    final control = ControlPlaneProvider()..debugApiFactory = (_, _) => api;
+    final music = policyTrack('d', action: 'block', reason: '强制');
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<ControlPlaneProvider>.value(value: control),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: Center(
+                child: ElevatedButton(
+                  onPressed: () => showTrackDetailDialog(context, music),
+                  child: const Text('detail'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('detail'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('申诉'));
+    await tester.pumpAndSettle();
+    expect(find.text('申诉社区策略'), findsOneWidget);
+
+    // 空说明被拒绝。
+    await tester.tap(find.text('提交申诉'));
+    await tester.pump();
+    expect(find.text('申诉说明不能为空'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextField, '申诉说明 *'),
+      '该作品为我本人原创',
+    );
+    await tester.tap(find.text('提交申诉'));
+    await tester.pumpAndSettle();
+    expect(api.posts, hasLength(1));
+    expect(api.posts.single.$1, '/policy/bafymanifest-d/appeal');
+    expect(find.text('申诉已提交，等待社区源审核'), findsOneWidget);
+    // 让 SnackBar 计时器结束，避免 pending timer。
+    await tester.pump(const Duration(seconds: 5));
+    control.dispose();
   });
 }

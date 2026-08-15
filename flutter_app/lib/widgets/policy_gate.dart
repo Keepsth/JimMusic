@@ -144,6 +144,12 @@ Future<void> showTrackDetailDialog(BuildContext context, Music music) async {
         ),
       ),
       actions: [
+        // SEC-009：对生效策略可匿名申诉（本机核心代签）。
+        if (music.policyAction != null && music.manifestCid != null)
+          TextButton(
+            onPressed: () => _appealPolicy(dialogContext, music),
+            child: const Text('申诉'),
+          ),
         if (music.policyAction != null &&
             _overridableActions.contains(music.policyAction) &&
             music.manifestCid != null)
@@ -184,4 +190,65 @@ Future<void> showTrackDetailDialog(BuildContext context, Music music) async {
       ],
     ),
   );
+}
+
+/// SEC-009：详情入口的匿名申诉——填写说明后由本机核心代签提交。
+Future<void> _appealPolicy(BuildContext dialogContext, Music music) async {
+  final description = TextEditingController();
+  String? validationError;
+  final submitted = await showDialog<bool>(
+    context: dialogContext,
+    builder: (appealContext) => StatefulBuilder(
+      builder: (context, setState) => AlertDialog(
+        title: const Text('申诉社区策略'),
+        content: SizedBox(
+          width: 480,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: description,
+                minLines: 3,
+                maxLines: 6,
+                decoration: const InputDecoration(
+                  labelText: '申诉说明 *',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              if (validationError != null)
+                Text(
+                  validationError!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(appealContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (description.text.trim().isEmpty) {
+                setState(() => validationError = '申诉说明不能为空');
+                return;
+              }
+              Navigator.pop(appealContext, true);
+            },
+            child: const Text('提交申诉'),
+          ),
+        ],
+      ),
+    ),
+  );
+  if (submitted != true) return;
+  if (!dialogContext.mounted) return;
+  final control = dialogContext.read<ControlPlaneProvider>();
+  await control.appealPolicy(music.manifestCid!, description.text);
+  if (dialogContext.mounted) {
+    ScaffoldMessenger.of(
+      dialogContext,
+    ).showSnackBar(const SnackBar(content: Text('申诉已提交，等待社区源审核')));
+  }
 }

@@ -152,7 +152,7 @@ Definition of Done。`ALL` 或多平台需求只有在声明平台全部取得�
 | SEC-006 | 本机通过 | 默认 `127.0.0.1`、随机 256-bit token 0600、所有路由鉴权；测试 | 远程 TLS 需受控反向代理，发布环境测试待补 |
 | SEC-007 | 本机通过 | CAS/网关/Bitswap 块 CID、Manifest/Feed/插件签名及重放回滚检查；篡改和错误 CID 负向测试 | 七端恶意 peer 压力验收待 RC |
 | SEC-008 | 本机通过 | 许可证/权利、内容标签、发布者签名 Validate；发布测试 | UI 向导仍允许高级 JSON 编辑 |
-| SEC-009 | 部分实现 | 本地 block、社区 policy、来源解释、签名举报队列与重试 | UI 申诉和跨入口策略执行仍不完整 |
+| SEC-009 | 本机通过 | 本地 block、社区 policy、来源解释、签名举报队列与重试；曲目详情申诉入口（匿名、本机核心一次性密钥代签、目标/说明校验、本地 block 结构化拒绝），搜索/详情/精确打开三入口统一应用策略（COM-006）；API 测试 1 项 + Flutter 10 项 | 七端交互待验收 |
 | SEC-010 | 本机通过 | 脱敏诊断排除秘密/路径；匿名举报禁止身份字段，加密举报只发送 envelope；隐私测试 | 需七端抓包复验 |
 | SEC-011 | 本机通过 | 身份轮换/撤销签名、防旧 Feed 重放；插件 revoked preflight；撤销 Feed 快照防回滚：`enable`/`rollback` 对已撤销发布拒绝（含状态被手工改回 Disabled 的绕过场景），`mutate_record` 修复为保留域错误语义；生命周期测试 2 项 | 撤销 Feed 的跨版本快照恢复与七端交互待验收 |
 | SEC-012 | 本机通过 | DAG-CBOR 深度/大小/集合/文本限制，HTTP body/response/artifact/feed hop 限制；负向测试 | 尚无持续 fuzz job |
